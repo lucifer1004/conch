@@ -1,0 +1,14 @@
+# OS
+.DS_Store
+
+# Build
+wasm/target/
+
+# Tooling
+.omc
+_vendor/
+
+# Rendered outputs
+template/*.png
+template/*.pdf
+demo/*.pdf
