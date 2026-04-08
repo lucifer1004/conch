@@ -1,4 +1,5 @@
 #import "theme.typ": _resolve-font, _resolve-theme
+#import "chrome.typ": _resolve-chrome
 #import "session.typ": _execute-session, _parse-commands, _process-keyline
 #import "render.typ": _render-frame
 
@@ -57,6 +58,7 @@
   hostname: "conch",
   theme: "dracula",
   font: auto,
+  chrome: "macos",
   width: auto,
   height: auto,
   files: (:),
@@ -67,6 +69,7 @@
   let session = _execute-session(user, hostname, files, commands)
   let t = _resolve-theme(theme)
   let f = _resolve-font(font)
+  let c = _resolve-chrome(chrome)
   let term-width = if width == auto { 560pt } else { width }
   let term-height = if height == auto { auto } else { height }
   _render-frame(
@@ -75,6 +78,7 @@
     hostname,
     t,
     f,
+    c,
     term-width,
     show-cursor: show-cursor,
     term-height: term-height,
@@ -91,6 +95,7 @@
   hostname: "conch",
   theme: "dracula",
   font: auto,
+  chrome: "macos",
   width: auto,
   height: auto,
   files: (:),
@@ -104,6 +109,7 @@
     hostname: hostname,
     theme: theme,
     font: font,
+    chrome: chrome,
     width: width,
     height: height,
     files: files,
@@ -119,6 +125,7 @@
   hostname: "conch",
   theme: "dracula",
   font: auto,
+  chrome: "macos",
   width: auto,
   height: auto,
   files: (:),
@@ -131,6 +138,7 @@
   let commands = _parse-commands(body)
   let t = _resolve-theme(theme)
   let f = _resolve-font(font)
+  let c = _resolve-chrome(chrome)
   let term-width = if width == auto { 560pt } else { width }
   let term-height = if height == auto { auto } else { height }
   let run-cmds = commands.slice(0, commands.len() - 1)
@@ -146,6 +154,7 @@
       hostname,
       t,
       f,
+      c,
       term-width,
       typing: typing,
       term-height: term-height,
@@ -159,6 +168,7 @@
         hostname,
         t,
         f,
+        c,
         term-width,
         typing: typing,
         term-height: term-height,
@@ -176,6 +186,7 @@
   hostname: "conch",
   theme: "dracula",
   font: auto,
+  chrome: "macos",
   width: auto,
   height: auto,
   files: (:),
@@ -188,6 +199,7 @@
   let commands = _parse-commands(body)
   let t = _resolve-theme(theme)
   let f = _resolve-font(font)
+  let c = _resolve-chrome(chrome)
   let term-width = if width == auto { 560pt } else { width }
   let term-height = if height == auto { auto } else { height }
   let run-cmds = commands.slice(0, commands.len() - 1)
@@ -204,7 +216,7 @@
       (final: cmd, states: none)
     }
   })
-  let exec-cmds = cmd-data.map(c => c.final)
+  let exec-cmds = cmd-data.map(d => d.final)
 
   let last-data = if last-cmd.contains("\\x") {
     let states = _process-keyline(last-cmd)
@@ -230,6 +242,7 @@
           hostname,
           t,
           f,
+          c,
           term-width,
           typing: state.text,
           cursor-pos: state.cursor,
@@ -250,6 +263,7 @@
           hostname,
           t,
           f,
+          c,
           term-width,
           typing: partial,
           term-height: term-height,
@@ -269,6 +283,7 @@
       hostname,
       t,
       f,
+      c,
       term-width,
       typing: "",
       term-height: term-height,
@@ -282,6 +297,7 @@
         hostname,
         t,
         f,
+        c,
         term-width,
         typing: "",
         term-height: term-height,
@@ -302,6 +318,7 @@
           hostname,
           t,
           f,
+          c,
           term-width,
           typing: state.text,
           cursor-pos: state.cursor,
@@ -320,6 +337,7 @@
           hostname,
           t,
           f,
+          c,
           term-width,
           typing: partial,
           term-height: term-height,
@@ -343,6 +361,7 @@
         hostname,
         t,
         f,
+        c,
         term-width,
         typing: last-data.final,
         show-cursor: show-cursor,

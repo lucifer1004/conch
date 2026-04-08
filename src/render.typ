@@ -1,4 +1,5 @@
 #import "ansi.typ": _has-ansi, _render-ansi-raw
+#import "chrome.typ": _resolve-chrome
 
 #let _render-output(entry, t, f) = {
   if entry.output == "" { return }
@@ -55,6 +56,7 @@
   hostname,
   t,
   f,
+  c,
   term-width,
   typing: none,
   cursor-pos: none,
@@ -63,23 +65,7 @@
   overflow: "clip",
 ) = {
   let title = user + "@" + hostname
-
-  let title-bar = block(
-    fill: t.title-bg,
-    width: 100%,
-    inset: (x: 12pt, y: 8pt),
-    {
-      box(circle(fill: rgb("#ff5f57"), radius: 5pt))
-      h(6pt)
-      box(circle(fill: rgb("#febc2e"), radius: 5pt))
-      h(6pt)
-      box(circle(fill: rgb("#28c840"), radius: 5pt))
-      h(1fr)
-      text(..f, fill: t.title-fg)[#title]
-      h(1fr)
-      box(width: 42pt)
-    },
-  )
+  let title-bar = (c.bar)(title, t, f)
 
   let body-content = {
     set text(..f, fill: t.fg)
@@ -180,7 +166,7 @@
 
         block(
           fill: t.bg,
-          radius: 8pt,
+          radius: c.radius,
           clip: true,
           width: term-width,
           height: term-height,
@@ -212,7 +198,7 @@
         pagebreak()
         block(
           fill: t.bg,
-          radius: 8pt,
+          radius: c.radius,
           clip: true,
           width: term-width,
           height: term-height,
@@ -237,7 +223,7 @@
     // Clip: shift old lines off the top like a real terminal
     block(
       fill: t.bg,
-      radius: 8pt,
+      radius: c.radius,
       clip: true,
       width: term-width,
       height: term-height,
@@ -281,7 +267,7 @@
       },
     )
   } else {
-    block(fill: t.bg, radius: 8pt, clip: true, width: term-width, {
+    block(fill: t.bg, radius: c.radius, clip: true, width: term-width, {
       title-bar
       block(inset: (x: 12pt, y: 10pt), width: 100%, body-content)
     })

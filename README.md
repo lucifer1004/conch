@@ -283,6 +283,30 @@ Pass a dictionary instead of a name:
 )
 ```
 
+## Window Chrome
+
+Five built-in window decoration styles. Chrome and theme are independent — mix any chrome with any color theme.
+
+```typst
+#show: terminal.with(chrome: "windows", theme: "dracula")
+```
+
+`macos` (default), `windows`, `windows-terminal`, `gnome`, `plain`
+
+![Window chrome styles](./demo/chrome.png)
+
+Pass a custom function for fully custom title bars:
+
+```typst
+#terminal-frame(
+  chrome: (title, t, f) => block(fill: t.title-bg, width: 100%, inset: 8pt, {
+    text(..f, fill: t.title-fg)[#title]
+  }),
+)[...]
+```
+
+Available on all functions: `terminal`, `terminal-block`, `terminal-frame`, `terminal-per-line`, `terminal-per-char`.
+
 ## Font
 
 The `font` parameter accepts a dictionary of Typst [`text()`](https://typst.app/docs/reference/text/text/) properties. Only specify what you want to change — unset keys use the defaults (JetBrains Mono, 9pt).
@@ -500,12 +524,12 @@ Content splits at command boundaries — each entry (prompt + output) stays toge
 
 | Function                                                                                         | Description                                                                                                                       |
 | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
-| `terminal-frame(body, title, theme, font, width, height)`                                        | Themed terminal window chrome                                                                                                     |
-| `render-ansi(body, theme)`                                                                       | ANSI escape sequence renderer                                                                                                     |
-| `terminal(body, user, hostname, theme, font, width, height, files, show-cursor, overflow)`       | Standalone page shell simulator (show rule; sets page dimensions)                                                                 |
-| `terminal-block(body, user, hostname, theme, font, width, height, files, show-cursor, overflow)` | Embeddable shell simulator (no page settings; composable with other content)                                                      |
-| `terminal-per-line(body, user, hostname, theme, font, width, height, files, overflow, hold)`     | Per-command animation frames; `hold` sets extra duplicate pages per step (`after-frame`)                                          |
-| `terminal-per-char(body, user, hostname, theme, font, width, height, files, overflow, hold)`     | Per-keystroke animation frames; `hold` sets tail pacing (`after-output`, `after-final`, `final-cursor-blink`, `final-blink-hold`) |
+| `terminal-frame(body, title, theme, font, chrome, width, height)`                                        | Themed terminal window chrome                                                                                                     |
+| `render-ansi(body, theme)`                                                                               | ANSI escape sequence renderer                                                                                                     |
+| `terminal(body, user, hostname, theme, font, chrome, width, height, files, show-cursor, overflow)`       | Standalone page shell simulator (show rule; sets page dimensions)                                                                 |
+| `terminal-block(body, user, hostname, theme, font, chrome, width, height, files, show-cursor, overflow)` | Embeddable shell simulator (no page settings; composable with other content)                                                      |
+| `terminal-per-line(body, user, hostname, theme, font, chrome, width, height, files, overflow, hold)`     | Per-command animation frames; `hold` sets extra duplicate pages per step (`after-frame`)                                          |
+| `terminal-per-char(body, user, hostname, theme, font, chrome, width, height, files, overflow, hold)`     | Per-keystroke animation frames; `hold` sets tail pacing (`after-output`, `after-final`, `final-cursor-blink`, `final-blink-hold`) |
 
 ### Exports
 

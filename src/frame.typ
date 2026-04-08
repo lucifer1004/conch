@@ -1,4 +1,5 @@
 #import "theme.typ": _resolve-font, _resolve-theme
+#import "chrome.typ": _resolve-chrome
 
 // =========================================================================
 // Layer 1: Terminal frame — a reusable themed terminal window
@@ -19,36 +20,26 @@
   title: none,
   theme: "dracula",
   font: auto,
+  chrome: "macos",
   width: auto,
   height: auto,
 ) = {
   let t = _resolve-theme(theme)
   let f = _resolve-font(font)
+  let c = _resolve-chrome(chrome)
   let term-width = if width == auto { 560pt } else { width }
   let term-height = if height == auto { auto } else { height }
   let title-text = if title != none { title } else { "" }
+  let title-bar = (c.bar)(title-text, t, f)
 
   block(
     fill: t.bg,
-    radius: 8pt,
+    radius: c.radius,
     clip: true,
     width: term-width,
     height: term-height,
     {
-      // Title bar
-      block(fill: t.title-bg, width: 100%, inset: (x: 12pt, y: 8pt), {
-        box(circle(fill: rgb("#ff5f57"), radius: 5pt))
-        h(6pt)
-        box(circle(fill: rgb("#febc2e"), radius: 5pt))
-        h(6pt)
-        box(circle(fill: rgb("#28c840"), radius: 5pt))
-        h(1fr)
-        if title-text != "" {
-          text(..f, fill: t.title-fg)[#title-text]
-        }
-        h(1fr)
-        box(width: 42pt)
-      })
+      if title-bar != none { title-bar }
 
       // Body
       block(inset: (x: 12pt, y: 10pt), width: 100%, {
