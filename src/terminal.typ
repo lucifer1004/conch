@@ -41,6 +41,160 @@
   o
 }
 
+/// Generate an array of terminal frame content blocks — one per animation step.
+/// No pages or side effects; integrate with any framework (touying, polylux, …).
+///
+/// Modes:
+/// - `"per-line"` — one frame per command execution step (default)
+/// - `"per-char"` — one frame per keystroke (supports `\xNN` keyboard escapes)
+/// - `"key-frames"` — only meaningful moments (typed + output for each command)
+///
+/// The last command in `commands` is always typed but **not executed**.
+///
+/// ```typst
+/// #let frames = terminal-frames(
+///   commands: ("ls", "cat hello.txt", "echo done"),
+///   files: ("hello.txt": "Hello!"),
+/// )
+/// // frames: array of content — use with touying #alternatives(..frames)
+/// ```
+#let terminal-frames(
+  mode: "per-line",
+  user: "user",
+  hostname: "conch",
+  theme: "dracula",
+  font: auto,
+  chrome: "macos",
+  style: auto,
+  width: auto,
+  height: auto,
+  files: (:),
+  show-cursor: true,
+  overflow: "clip",
+  commands: (),
+) = {
+  let theme = _resolve-theme(theme)
+  let font = _resolve-font(font)
+  let chrome = _resolve-chrome(chrome)
+  let style = _resolve-style(style)
+  let term-width = if width == auto { 560pt } else { width }
+  let term-height = if height == auto { auto } else { height }
+
+  if commands.len() == 0 { return () }
+
+  let run-cmds = commands.slice(0, commands.len() - 1)
+  let last-cmd = commands.last()
+
+  // Shared frame builder
+  let frame(session, typing, cursor-pos: none) = _render-frame(
+    session,
+    user,
+    hostname,
+    theme,
+    font,
+    chrome,
+    style,
+    term-width,
+    typing: typing,
+    cursor-pos: cursor-pos,
+    show-cursor: show-cursor,
+    term-height: term-height,
+    overflow: overflow,
+  )
+
+  let frames = ()
+
+  if mode == "per-line" {
+    for i in range(run-cmds.len() + 1) {
+      let executed = run-cmds.slice(0, i)
+      let session = _execute-session(user, hostname, files, executed)
+      let typing = if i < run-cmds.len() { run-cmds.at(i) } else { last-cmd }
+      frames += (frame(session, typing),)
+    }
+  } else if mode == "key-frames" {
+    for i in range(run-cmds.len()) {
+      // Pre-execution: command typed, not yet run
+      let pre-session = _execute-session(user, hostname, files, run-cmds.slice(
+        0,
+        i,
+      ))
+      frames += (frame(pre-session, run-cmds.at(i)),)
+      // Post-execution: output visible
+      let post-session = _execute-session(user, hostname, files, run-cmds.slice(
+        0,
+        i + 1,
+      ))
+      frames += (frame(post-session, ""),)
+    }
+    // Last command typed (not executed)
+    let final-session = _execute-session(user, hostname, files, run-cmds)
+    frames += (frame(final-session, last-cmd),)
+  } else if mode == "per-char" {
+    // Pre-process keylines
+    let cmd-data = run-cmds.map(cmd => {
+      if cmd.contains("\\x") {
+        let states = _process-keyline(cmd)
+        let final-text = if states.len() > 0 { states.last().text } else { "" }
+        (final: final-text, states: states)
+      } else {
+        (final: cmd, states: none)
+      }
+    })
+    let exec-cmds = cmd-data.map(d => d.final)
+
+    let last-data = if last-cmd.contains("\\x") {
+      let states = _process-keyline(last-cmd)
+      let final-text = if states.len() > 0 { states.last().text } else { "" }
+      (final: final-text, states: states)
+    } else {
+      (final: last-cmd, states: none)
+    }
+
+    for i in range(cmd-data.len()) {
+      let info = cmd-data.at(i)
+      let executed = exec-cmds.slice(0, i)
+      let session = _execute-session(user, hostname, files, executed)
+
+      if info.states != none {
+        for state in info.states {
+          frames += (frame(session, state.text, cursor-pos: state.cursor),)
+        }
+      } else {
+        let cmd-chars = info.final.clusters()
+        for j in range(cmd-chars.len() + 1) {
+          let partial = cmd-chars.slice(0, j).join()
+          frames += (frame(session, partial),)
+        }
+      }
+
+      // Output frame
+      let session-after = _execute-session(
+        user,
+        hostname,
+        files,
+        exec-cmds.slice(0, i + 1),
+      )
+      frames += (frame(session-after, ""),)
+    }
+
+    // Last command typing
+    let session-final = _execute-session(user, hostname, files, exec-cmds)
+    if last-data.states != none {
+      for state in last-data.states {
+        frames += (frame(session-final, state.text, cursor-pos: state.cursor),)
+      }
+    } else {
+      let cmd-chars = last-cmd.clusters()
+      for j in range(cmd-chars.len() + 1) {
+        let partial = cmd-chars.slice(0, j).join()
+        frames += (frame(session-final, partial),)
+      }
+    }
+  }
+
+  frames
+}
+
 /// Render a terminal session as an embeddable block — no page settings,
 /// composable with surrounding content.
 ///

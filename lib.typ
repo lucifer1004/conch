@@ -2,5 +2,6 @@
 #import "src/frame.typ": terminal-frame
 #import "src/ansi.typ": render-ansi
 #import "src/terminal.typ": (
-  terminal, terminal-block, terminal-per-char, terminal-per-line,
+  terminal, terminal-block, terminal-frames, terminal-per-char,
+  terminal-per-line,
 )

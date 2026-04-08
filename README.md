@@ -540,18 +540,52 @@ ls -la
 
 Content splits at command boundaries — each entry (prompt + output) stays together on the same page. The final prompt with cursor appears on the last page.
 
+## Touying Integration
+
+Use `terminal-frames()` to generate an array of frame content for slide frameworks like [touying](https://github.com/touying-typ/touying). Each frame is a self-contained terminal block.
+
+```typst
+#import "@preview/touying:0.7.1": *
+#import "@preview/conch:0.1.0": terminal-frames
+
+#import themes.simple: simple-theme, slide, title-slide
+#show: simple-theme.with(aspect-ratio: "16-9")
+
+#let frames = terminal-frames(
+  mode: "per-line",  // or "key-frames", "per-char"
+  commands: ("ls", "cat hello.txt", "echo done"),
+  files: ("hello.txt": "Hello!"),
+  width: 480pt,
+  height: 200pt,
+)
+
+#slide(repeat: frames.len(), self => [
+  == Demo
+  #frames.at(self.subslide - 1)
+])
+```
+
+| Mode           | Frames                  | Best for           |
+| -------------- | ----------------------- | ------------------ |
+| `"per-line"`   | One per command step    | Most presentations |
+| `"key-frames"` | Pre/post execution only | Dense sessions     |
+| `"per-char"`   | One per keystroke       | Short demos        |
+
+See `demo/touying.typ` for a full working example.
+
 ## API Reference
 
 ### Functions
 
-| Function                                                                                                 | Description                                                                                                                       |
-| -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `terminal-frame(body, title, theme, font, chrome, style, width, height)`                                 | Themed terminal window chrome                                                                                                     |
-| `render-ansi(body, theme)`                                                                               | ANSI escape sequence renderer                                                                                                     |
-| `terminal(body, user, hostname, theme, font, chrome, width, height, files, show-cursor, overflow)`       | Standalone page shell simulator (show rule; sets page dimensions)                                                                 |
-| `terminal-block(body, user, hostname, theme, font, chrome, width, height, files, show-cursor, overflow)` | Embeddable shell simulator (no page settings; composable with other content)                                                      |
-| `terminal-per-line(body, user, hostname, theme, font, chrome, width, height, files, overflow, hold)`     | Per-command animation frames; `hold` sets extra duplicate pages per step (`after-frame`)                                          |
-| `terminal-per-char(body, user, hostname, theme, font, chrome, width, height, files, overflow, hold)`     | Per-keystroke animation frames; `hold` sets tail pacing (`after-output`, `after-final`, `final-cursor-blink`, `final-blink-hold`) |
+| Function                                                                                                            | Description                                                                                                                       |
+| ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `terminal-frame(body, title, theme, font, chrome, style, width, height)`                                            | Themed terminal window chrome                                                                                                     |
+| `render-ansi(body, theme)`                                                                                          | ANSI escape sequence renderer                                                                                                     |
+| `terminal(body, user, hostname, theme, font, chrome, width, height, files, show-cursor, overflow)`                  | Standalone page shell simulator (show rule; sets page dimensions)                                                                 |
+| `terminal-block(body, user, hostname, theme, font, chrome, width, height, files, show-cursor, overflow)`            | Embeddable shell simulator (no page settings; composable with other content)                                                      |
+| `terminal-per-line(body, user, hostname, theme, font, chrome, width, height, files, overflow, hold)`                | Per-command animation frames; `hold` sets extra duplicate pages per step (`after-frame`)                                          |
+| `terminal-per-char(body, user, hostname, theme, font, chrome, width, height, files, overflow, hold)`                | Per-keystroke animation frames; `hold` sets tail pacing (`after-output`, `after-final`, `final-cursor-blink`, `final-blink-hold`) |
+| `terminal-frames(mode, user, hostname, theme, font, chrome, width, height, files, show-cursor, overflow, commands)` | Returns array of frame content; `mode`: `"per-line"`, `"per-char"`, `"key-frames"`                                                |
 
 ### Exports
 
@@ -559,6 +593,7 @@ Content splits at command boundaries — each entry (prompt + output) stays toge
 #import "@preview/conch:0.1.0": (
   terminal,           // standalone page shell (show rule)
   terminal-block,     // embeddable shell block
+  terminal-frames,    // frame array for slide frameworks
   terminal-frame,     // standalone frame (no shell)
   terminal-per-line,  // per-command animation
   terminal-per-char,  // per-keystroke animation
