@@ -42,7 +42,7 @@
       if title-bar != none { title-bar }
 
       // Body
-      block(inset: (x: 12pt, y: 10pt), width: 100%, {
+      block(inset: (x: 12pt, y: 6pt), width: 100%, {
         set text(..f, fill: t.fg)
         set par(leading: 0.4em)
         body

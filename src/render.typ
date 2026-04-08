@@ -104,8 +104,10 @@
   if term-height != auto and overflow == "paginate" {
     // Paginate: split content across new pages instead of clipping
     context {
-      let title-h = measure(title-bar).height
-      let available = term-height - title-h / 2
+      let title-h = if title-bar == none { 0pt } else {
+        measure(title-bar).height
+      }
+      let available = term-height - title-h
 
       let one-line = measure(block({
         set text(..f)
@@ -171,9 +173,9 @@
           width: term-width,
           height: term-height,
           {
-            title-bar
+            if title-bar != none { title-bar }
             block(width: 100%, height: available, clip: true, {
-              block(inset: (x: 12pt, y: 10pt), width: term-width, {
+              block(inset: (x: 12pt, y: 6pt), width: term-width, {
                 set text(..f, fill: t.fg)
                 set par(leading: 0.4em)
                 for entry in page.items {
@@ -203,9 +205,9 @@
           width: term-width,
           height: term-height,
           {
-            title-bar
+            if title-bar != none { title-bar }
             block(width: 100%, height: available, clip: true, {
-              block(inset: (x: 12pt, y: 10pt), width: term-width, {
+              block(inset: (x: 12pt, y: 6pt), width: term-width, {
                 set text(..f, fill: t.fg)
                 set par(leading: 0.4em)
                 _render-prompt-parts(user, hostname, session.final-path, t)
@@ -220,20 +222,23 @@
       }
     }
   } else if term-height != auto {
-    // Clip: shift old lines off the top like a real terminal
+    // Clip: shift old lines off the top like a real terminal.
+    // Use grid(rows: auto, 1fr) so the title bar takes its natural height
+    // and the body fills the rest — no manual title-bar measurement needed.
     block(
       fill: t.bg,
       radius: c.radius,
       clip: true,
       width: term-width,
       height: term-height,
-      {
-        title-bar
-        context {
-          let title-h = measure(title-bar).height
-          let available = term-height - title-h / 2
+      grid(
+        columns: (1fr,),
+        rows: if title-bar != none { (auto, 1fr) } else { (1fr,) },
+        ..if title-bar != none { (title-bar,) } else { () },
+        layout(size => context {
+          let available = size.height
           let body-block = block(
-            inset: (x: 12pt, y: 10pt),
+            inset: (x: 12pt, y: 6pt),
             width: term-width,
             body-content,
           )
@@ -256,20 +261,26 @@
 
           block(width: 100%, height: available, clip: true, {
             if body-h > available {
-              // Round up to whole lines so no half-letters show at the top
-              let overflow = body-h - available
-              let lines-to-skip = calc.ceil(overflow / line-step)
-              v(-(lines-to-skip * line-step))
+              // Snap to whole-line boundary, accounting for the body inset.
+              // Line tops sit at inset-y + k*line-step inside the body block.
+              // +1 extra line guarantees no partial-line artifact even when
+              // line-step (measured from plain text) drifts slightly from
+              // actual content (colored/bold prompts, syntax highlighting).
+              let inset-y = 6pt
+              let lines-to-skip = calc.max(0, calc.ceil(
+                (body-h - available - inset-y) / line-step,
+              ))
+              v(-(inset-y + lines-to-skip * line-step - 2pt))
             }
             body-block
           })
-        }
-      },
+        }),
+      ),
     )
   } else {
     block(fill: t.bg, radius: c.radius, clip: true, width: term-width, {
-      title-bar
-      block(inset: (x: 12pt, y: 10pt), width: 100%, body-content)
+      if title-bar != none { title-bar }
+      block(inset: (x: 12pt, y: 6pt), width: 100%, body-content)
     })
   }
 }

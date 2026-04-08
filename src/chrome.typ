@@ -5,39 +5,50 @@
 // macOS — three colored circles, centered title, rounded corners
 // ---------------------------------------------------------------------------
 #let _chrome-macos = (
-  bar: (title, t, f) => block(fill: t.title-bg, width: 100%, inset: (x: 12pt, y: 8pt), {
-    box(circle(fill: rgb("#ff5f57"), radius: 5pt))
-    h(6pt)
-    box(circle(fill: rgb("#febc2e"), radius: 5pt))
-    h(6pt)
-    box(circle(fill: rgb("#28c840"), radius: 5pt))
-    h(1fr)
-    if title != "" { text(..f, fill: t.title-fg)[#title] }
-    h(1fr)
-    box(width: 42pt) // balance the circles
-  }),
+  bar: (title, t, f) => block(
+    fill: t.title-bg,
+    width: 100%,
+    inset: (x: 12pt, y: 8pt),
+    {
+      box(circle(fill: rgb("#ff5f57"), radius: 5pt))
+      h(6pt)
+      box(circle(fill: rgb("#febc2e"), radius: 5pt))
+      h(6pt)
+      box(circle(fill: rgb("#28c840"), radius: 5pt))
+      h(1fr)
+      if title != "" { text(..f, fill: t.title-fg)[#title] }
+      h(1fr)
+      box(width: 42pt) // balance the circles
+    },
+  ),
   radius: 8pt,
 )
 
 // ---------------------------------------------------------------------------
 // Windows (classic) — left title, square ─ □ ✕ buttons, sharp corners
 // ---------------------------------------------------------------------------
-#let _win-btn(content, f, fg) = box(
-  width: 30pt, height: 18pt,
-  align(center + horizon, text(..f, fill: fg, size: 8pt)[#content]),
+#let _win-btn(content, f, fg, bg: none) = box(
+  fill: bg,
+  width: 32pt,
+  height: 22pt,
+  align(center + horizon, text(..f, fill: fg, size: 9pt)[#content]),
 )
 
 #let _chrome-windows = (
-  bar: (title, t, f) => block(fill: t.title-bg, width: 100%, inset: (x: 10pt, y: 5pt), {
-    if title != "" { text(..f, fill: t.title-fg)[#title] }
-    h(1fr)
-    _win-btn([\u{2500}], f, t.title-fg) // ─ minimize
-    _win-btn([\u{25A1}], f, t.title-fg) // □ maximize
-    box(
-      fill: rgb("#e81123"), width: 30pt, height: 18pt,
-      align(center + horizon, text(..f, fill: white, size: 8pt)[\u{2715}]),
-    ) // ✕ close
-  }),
+  bar: (title, t, f) => block(
+    fill: t.title-bg,
+    width: 100%,
+    inset: (x: 12pt, y: 6pt),
+    {
+      if title != "" {
+        box(height: 22pt, align(horizon, text(..f, fill: t.title-fg)[#title]))
+      }
+      h(1fr)
+      _win-btn([\u{2500}], f, t.title-fg) // ─ minimize
+      _win-btn([\u{25A1}], f, t.title-fg) // □ maximize
+      _win-btn([\u{2715}], f, white, bg: rgb("#e81123")) // ✕ close
+    },
+  ),
   radius: 0pt,
 )
 
@@ -45,23 +56,25 @@
 // Windows Terminal — tab-style title, modern buttons, rounded top
 // ---------------------------------------------------------------------------
 #let _chrome-windows-terminal = (
-  bar: (title, t, f) => block(fill: t.title-bg, width: 100%, inset: (x: 8pt, y: 4pt), {
-    box(
-      fill: t.bg,
-      radius: (top-left: 6pt, top-right: 6pt),
-      inset: (x: 14pt, y: 5pt),
-      {
-        if title != "" { text(..f, fill: t.title-fg)[#title] }
-      },
-    )
-    h(1fr)
-    _win-btn([\u{2500}], f, t.title-fg)
-    _win-btn([\u{25A1}], f, t.title-fg)
-    box(
-      fill: rgb("#e81123"), width: 30pt, height: 18pt,
-      align(center + horizon, text(..f, fill: white, size: 8pt)[\u{2715}]),
-    )
-  }),
+  bar: (title, t, f) => block(
+    fill: t.title-bg,
+    width: 100%,
+    inset: (x: 8pt, y: 5pt),
+    {
+      box(
+        fill: t.bg,
+        radius: (top-left: 6pt, top-right: 6pt),
+        inset: (x: 14pt, y: 5pt),
+        {
+          if title != "" { text(..f, fill: t.title-fg, size: 8pt)[#title] }
+        },
+      )
+      h(1fr)
+      _win-btn([\u{2500}], f, t.title-fg)
+      _win-btn([\u{25A1}], f, t.title-fg)
+      _win-btn([\u{2715}], f, white, bg: rgb("#e81123"))
+    },
+  ),
   radius: (top: 8pt, bottom: 0pt),
 )
 
@@ -69,19 +82,29 @@
 // GNOME — centered title, single close circle on the right
 // ---------------------------------------------------------------------------
 #let _chrome-gnome = (
-  bar: (title, t, f) => block(fill: t.title-bg, width: 100%, inset: (x: 12pt, y: 8pt), {
-    box(width: 18pt) // balance the close button
-    h(1fr)
-    if title != "" { text(..f, fill: t.title-fg)[#title] }
-    h(1fr)
-    box(
-      circle(
-        fill: t.title-fg.transparentize(70%),
-        radius: 9pt,
-        align(center + horizon, text(..f, fill: t.title-fg, size: 8pt, weight: "bold")[\u{2715}]),
-      ),
-    )
-  }),
+  bar: (title, t, f) => block(
+    fill: t.title-bg,
+    width: 100%,
+    inset: (x: 12pt, y: 7pt),
+    {
+      box(width: 22pt) // balance the close button
+      h(1fr)
+      if title != "" { text(..f, fill: t.title-fg)[#title] }
+      h(1fr)
+      box(
+        circle(
+          fill: t.title-fg.transparentize(50%),
+          radius: 10pt,
+          align(center + horizon, text(
+            ..f,
+            fill: t.title-bg,
+            size: 9pt,
+            weight: "bold",
+          )[\u{2715}]),
+        ),
+      )
+    },
+  ),
   radius: 10pt,
 )
 
@@ -106,9 +129,9 @@
 
 /// Resolve chrome: string name → preset, function → wrap as bar, dictionary → use directly.
 #let _resolve-chrome(chrome) = {
-  if chrome == auto { _chrome-macos }
-  else if type(chrome) == str { _chrome-presets.at(chrome, default: _chrome-macos) }
-  else if type(chrome) == function { (bar: chrome, radius: 8pt) }
-  else if type(chrome) == dictionary { _chrome-presets.macos + chrome }
-  else { _chrome-macos }
+  if chrome == auto { _chrome-macos } else if type(chrome) == str {
+    _chrome-presets.at(chrome, default: _chrome-macos)
+  } else if type(chrome) == function { (bar: chrome, radius: 8pt) } else if (
+    type(chrome) == dictionary
+  ) { _chrome-presets.macos + chrome } else { _chrome-macos }
 }

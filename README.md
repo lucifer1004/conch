@@ -522,8 +522,8 @@ Content splits at command boundaries — each entry (prompt + output) stays toge
 
 ### Functions
 
-| Function                                                                                         | Description                                                                                                                       |
-| ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| Function                                                                                                 | Description                                                                                                                       |
+| -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | `terminal-frame(body, title, theme, font, chrome, width, height)`                                        | Themed terminal window chrome                                                                                                     |
 | `render-ansi(body, theme)`                                                                               | ANSI escape sequence renderer                                                                                                     |
 | `terminal(body, user, hostname, theme, font, chrome, width, height, files, show-cursor, overflow)`       | Standalone page shell simulator (show rule; sets page dimensions)                                                                 |
