@@ -1,5 +1,5 @@
 #import "theme.typ": _resolve-font, _resolve-theme
-#import "session.typ": _execute-session, _parse-commands
+#import "session.typ": _execute-session, _parse-commands, _process-keyline
 #import "render.typ": _render-frame
 
 // --- Public shell functions ---
@@ -194,30 +194,72 @@
   let last-cmd = commands.last()
   let first-frame = true
 
-  for i in range(run-cmds.len()) {
-    let executed = run-cmds.slice(0, i)
-    let session = _execute-session(user, hostname, files, executed)
-    let cmd-chars = run-cmds.at(i).clusters()
+  // Pre-process: resolve key events for lines with \x escapes
+  let cmd-data = run-cmds.map(cmd => {
+    if cmd.contains("\\x") {
+      let states = _process-keyline(cmd)
+      let final-text = if states.len() > 0 { states.last().text } else { "" }
+      (final: final-text, states: states)
+    } else {
+      (final: cmd, states: none)
+    }
+  })
+  let exec-cmds = cmd-data.map(c => c.final)
 
-    for j in range(cmd-chars.len() + 1) {
-      if not first-frame { pagebreak() }
-      first-frame = false
-      let partial = cmd-chars.slice(0, j).join()
-      _render-frame(
-        session,
-        user,
-        hostname,
-        t,
-        f,
-        term-width,
-        typing: partial,
-        term-height: term-height,
-        overflow: overflow,
-      )
+  let last-data = if last-cmd.contains("\\x") {
+    let states = _process-keyline(last-cmd)
+    let final-text = if states.len() > 0 { states.last().text } else { "" }
+    (final: final-text, states: states)
+  } else {
+    (final: last-cmd, states: none)
+  }
+
+  for i in range(cmd-data.len()) {
+    let info = cmd-data.at(i)
+    let executed = exec-cmds.slice(0, i)
+    let session = _execute-session(user, hostname, files, executed)
+
+    if info.states != none {
+      // Keyline path: animate each buffer state with cursor position
+      for state in info.states {
+        if not first-frame { pagebreak() }
+        first-frame = false
+        _render-frame(
+          session,
+          user,
+          hostname,
+          t,
+          f,
+          term-width,
+          typing: state.text,
+          cursor-pos: state.cursor,
+          term-height: term-height,
+          overflow: overflow,
+        )
+      }
+    } else {
+      // Classic path: animate character by character
+      let cmd-chars = info.final.clusters()
+      for j in range(cmd-chars.len() + 1) {
+        if not first-frame { pagebreak() }
+        first-frame = false
+        let partial = cmd-chars.slice(0, j).join()
+        _render-frame(
+          session,
+          user,
+          hostname,
+          t,
+          f,
+          term-width,
+          typing: partial,
+          term-height: term-height,
+          overflow: overflow,
+        )
+      }
     }
 
     pagebreak()
-    let session-after = _execute-session(user, hostname, files, run-cmds.slice(
+    let session-after = _execute-session(user, hostname, files, exec-cmds.slice(
       0,
       i + 1,
     ))
@@ -249,23 +291,43 @@
   }
 
   {
-    let session-final = _execute-session(user, hostname, files, run-cmds)
-    let cmd-chars = last-cmd.clusters()
-    for j in range(cmd-chars.len() + 1) {
-      pagebreak()
-      let partial = cmd-chars.slice(0, j).join()
-      _render-frame(
-        session-final,
-        user,
-        hostname,
-        t,
-        f,
-        term-width,
-        typing: partial,
-        term-height: term-height,
-        overflow: overflow,
-      )
+    let session-final = _execute-session(user, hostname, files, exec-cmds)
+
+    if last-data.states != none {
+      for state in last-data.states {
+        pagebreak()
+        _render-frame(
+          session-final,
+          user,
+          hostname,
+          t,
+          f,
+          term-width,
+          typing: state.text,
+          cursor-pos: state.cursor,
+          term-height: term-height,
+          overflow: overflow,
+        )
+      }
+    } else {
+      let cmd-chars = last-cmd.clusters()
+      for j in range(cmd-chars.len() + 1) {
+        pagebreak()
+        let partial = cmd-chars.slice(0, j).join()
+        _render-frame(
+          session-final,
+          user,
+          hostname,
+          t,
+          f,
+          term-width,
+          typing: partial,
+          term-height: term-height,
+          overflow: overflow,
+        )
+      }
     }
+
     for k in range(h.after-final) {
       pagebreak()
       let show-cursor = if h.final-cursor-blink {
@@ -282,7 +344,7 @@
         t,
         f,
         term-width,
-        typing: last-cmd,
+        typing: last-data.final,
         show-cursor: show-cursor,
         term-height: term-height,
         overflow: overflow,

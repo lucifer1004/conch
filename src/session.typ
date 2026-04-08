@@ -6,6 +6,10 @@
 
 // --- Internal helpers ---
 
+/// Process a line containing `\xNN` keyboard escape notation.
+/// Returns an array of buffer states: (text, cursor, event).
+#let _process-keyline(line) = json(_plugin.process_keyline(bytes(line)))
+
 #let _find-raw(it) = {
   ""
   if type(it) == content {

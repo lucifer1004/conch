@@ -1,6 +1,8 @@
 #import "../lib.typ": terminal-per-char
 
 // Source for `just gif` → demo/demo.gif (README quick-start session, per-keystroke frames).
+// Showcases: ls, cat with syntax highlighting, permission denied + chmod fix,
+// backspace correction (\x7f), and cursor movement (\x1b[D / \x1b[C).
 #terminal-per-char(
   hold: (
     after-output: 10,
@@ -19,12 +21,11 @@
   ),
 )[```
 ls
-cat hello.txt
+cat helo\x7flo.txt
 cat src/main.rs
-cat run.sh
 ./run.sh
 chmod 755 run.sh
 ./run.sh
-echo "done"
+eco\x1b[Dh\x1b[F "done"
 ls
 ```]

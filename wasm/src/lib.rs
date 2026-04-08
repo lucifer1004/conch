@@ -1,5 +1,6 @@
 pub mod ansi;
 mod commands;
+pub mod keyline;
 mod parser;
 mod shell;
 mod types;
@@ -41,6 +42,22 @@ pub fn execute(input: &[u8]) -> Vec<u8> {
     };
 
     serde_json::to_vec(&out).unwrap_or_default()
+}
+
+#[wasm_func]
+pub fn process_keyline(input: &[u8]) -> Vec<u8> {
+    let line = match std::str::from_utf8(input) {
+        Ok(s) => s,
+        Err(e) => {
+            return format!(
+                r#"[{{"text":"","cursor":0,"event":"error: invalid UTF-8 at byte {}"}}]"#,
+                e.valid_up_to()
+            )
+            .into_bytes();
+        }
+    };
+    let states = keyline::process(line);
+    serde_json::to_vec(&states).unwrap_or_default()
 }
 
 #[wasm_func]

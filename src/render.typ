@@ -57,6 +57,7 @@
   f,
   term-width,
   typing: none,
+  cursor-pos: none,
   show-cursor: true,
   term-height: auto,
   overflow: "clip",
@@ -93,8 +94,22 @@
     // Final prompt
     {
       _render-prompt-parts(user, hostname, session.final-path, t)
-      if typing != none { text(fill: t.fg)[#typing] }
-      if show-cursor {
+      if typing != none {
+        if cursor-pos != none {
+          // Mid-line cursor: split text at cursor position
+          let chars = typing.clusters()
+          let pos = calc.min(cursor-pos, chars.len())
+          let before = chars.slice(0, pos).join()
+          let after = chars.slice(pos).join()
+          text(fill: t.fg)[#before]
+          if show-cursor { _cursor-cell(t) }
+          text(fill: t.fg)[#after]
+        } else {
+          // Default: cursor at end
+          text(fill: t.fg)[#typing]
+          if show-cursor { _cursor-cell(t) }
+        }
+      } else if show-cursor {
         _cursor-cell(t)
       }
     }

@@ -348,6 +348,35 @@ The last command is always typed but **not executed** — for a natural "in prog
 
 Pass `show-cursor: false` to `terminal`, `terminal-block`, `terminal-per-line`, or `terminal-per-char` to hide the cursor block (`terminal-frame` has no cursor).
 
+### Keyboard Operations
+
+Simulate typing corrections and cursor movement in per-char animations using `\xNN` escape notation. Lines without escapes use the fast default path (zero overhead).
+
+| Escape    | Key       | Effect                         |
+| --------- | --------- | ------------------------------ |
+| `\x7f`    | Backspace | Delete character before cursor |
+| `\x1b[C`  | Right     | Move cursor right              |
+| `\x1b[D`  | Left      | Move cursor left               |
+| `\x1b[H`  | Home      | Move cursor to start of line   |
+| `\x1b[F`  | End       | Move cursor to end of line     |
+| `\x1b[3~` | Delete    | Delete character at cursor     |
+| `\x03`    | Ctrl+C    | Interrupt (emits `^C` marker)  |
+| `\\`      | `\`       | Literal backslash              |
+
+Example — backspace correction and mid-line cursor editing:
+
+````typst
+#terminal-per-char(
+  user: "demo",
+  files: ("hello.txt": "Hello!"),
+)[```
+cat helo\x7flo.txt
+eco\x1b[Dh\x1b[F "done"
+```]
+````
+
+The first line types `cat helo`, backspaces the `o`, then types `lo.txt` — executing `cat hello.txt`. The second line types `eco`, moves left, inserts `h` to make `echo`, jumps to end, and finishes `echo "done"`.
+
 ### Frame Pacing (`hold`)
 
 Control how many duplicate pages are emitted at key moments — useful for GIF/video timing:
