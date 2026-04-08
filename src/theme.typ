@@ -189,6 +189,19 @@
   } else { _default-font }
 }
 
+/// Default layout style. Override any key to customize spacing.
+#let _default-style = (
+  inset: (x: 12pt, y: 6pt),
+  leading: 0.4em,
+)
+
+/// Resolve style: auto → defaults, dictionary → merge with defaults.
+#let _resolve-style(style) = {
+  if style == auto { _default-style } else if type(style) == dictionary {
+    _default-style + style
+  } else { _default-style }
+}
+
 /// Resolve a theme: accepts a built-in name (string) or a custom dictionary.
 #let _resolve-theme(theme) = {
   if type(theme) == str { themes.at(theme) } else if type(theme) == dictionary {

@@ -1,4 +1,4 @@
-#import "theme.typ": _resolve-font, _resolve-theme
+#import "theme.typ": _resolve-font, _resolve-style, _resolve-theme
 #import "chrome.typ": _resolve-chrome
 
 // =========================================================================
@@ -21,20 +21,22 @@
   theme: "dracula",
   font: auto,
   chrome: "macos",
+  style: auto,
   width: auto,
   height: auto,
 ) = {
-  let t = _resolve-theme(theme)
-  let f = _resolve-font(font)
-  let c = _resolve-chrome(chrome)
+  let theme = _resolve-theme(theme)
+  let font = _resolve-font(font)
+  let chrome = _resolve-chrome(chrome)
+  let style = _resolve-style(style)
   let term-width = if width == auto { 560pt } else { width }
   let term-height = if height == auto { auto } else { height }
   let title-text = if title != none { title } else { "" }
-  let title-bar = (c.bar)(title-text, t, f)
+  let title-bar = (chrome.bar)(title-text, theme, font)
 
   block(
-    fill: t.bg,
-    radius: c.radius,
+    fill: theme.bg,
+    radius: chrome.radius,
     clip: true,
     width: term-width,
     height: term-height,
@@ -42,9 +44,9 @@
       if title-bar != none { title-bar }
 
       // Body
-      block(inset: (x: 12pt, y: 6pt), width: 100%, {
-        set text(..f, fill: t.fg)
-        set par(leading: 0.4em)
+      block(inset: style.inset, width: 100%, {
+        set text(..font, fill: theme.fg)
+        set par(leading: style.leading)
         body
       })
     },

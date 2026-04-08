@@ -330,6 +330,28 @@ The `font` parameter accepts a dictionary of Typst [`text()`](https://typst.app/
 
 Available on all functions: `terminal`, `terminal-block`, `terminal-frame`, `terminal-per-line`, `terminal-per-char`.
 
+## Style
+
+The `style` parameter controls layout spacing. Override any key — unset keys use defaults.
+
+```typst
+// Tighter body padding
+#show: terminal.with(style: (inset: (x: 8pt, y: 4pt)))
+
+// Wider line spacing
+#show: terminal.with(style: (leading: 0.6em))
+
+// Both
+#show: terminal.with(style: (inset: (x: 16pt, y: 8pt), leading: 0.5em))
+```
+
+| Key       | Default             | Description                            |
+| --------- | ------------------- | -------------------------------------- |
+| `inset`   | `(x: 12pt, y: 6pt)` | Body padding (horizontal and vertical) |
+| `leading` | `0.4em`             | Line spacing (Typst `par.leading`)     |
+
+Available on all functions: `terminal`, `terminal-block`, `terminal-frame`, `terminal-per-line`, `terminal-per-char`.
+
 ## Animation
 
 Generate frames for GIF creation. Each page = one animation frame.
@@ -524,7 +546,7 @@ Content splits at command boundaries — each entry (prompt + output) stays toge
 
 | Function                                                                                                 | Description                                                                                                                       |
 | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `terminal-frame(body, title, theme, font, chrome, width, height)`                                        | Themed terminal window chrome                                                                                                     |
+| `terminal-frame(body, title, theme, font, chrome, style, width, height)`                                 | Themed terminal window chrome                                                                                                     |
 | `render-ansi(body, theme)`                                                                               | ANSI escape sequence renderer                                                                                                     |
 | `terminal(body, user, hostname, theme, font, chrome, width, height, files, show-cursor, overflow)`       | Standalone page shell simulator (show rule; sets page dimensions)                                                                 |
 | `terminal-block(body, user, hostname, theme, font, chrome, width, height, files, show-cursor, overflow)` | Embeddable shell simulator (no page settings; composable with other content)                                                      |

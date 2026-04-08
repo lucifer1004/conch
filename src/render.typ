@@ -1,13 +1,13 @@
 #import "ansi.typ": _has-ansi, _render-ansi-raw
 #import "chrome.typ": _resolve-chrome
 
-#let _render-output(entry, t, f) = {
+#let _render-output(entry, theme, font) = {
   if entry.output == "" { return }
   let has-lang = "lang" in entry and entry.lang != none
   let has-ansi = _has-ansi(entry.output)
   if has-lang and not has-ansi {
     show raw.where(block: false): it => {
-      set text(..f)
+      set text(..font)
       box(fill: none, inset: 0pt, outset: 0pt, radius: 0pt, stroke: none, it)
     }
     for line in entry.output.split("\n") {
@@ -15,10 +15,10 @@
       linebreak()
     }
   } else if has-ansi {
-    _render-ansi-raw(entry.output, t.fg, t.ansi)
+    _render-ansi-raw(entry.output, theme.fg, theme.ansi)
     linebreak()
   } else {
-    let color = if entry.exit-code != 0 { t.error } else { t.fg }
+    let color = if entry.exit-code != 0 { theme.error } else { theme.fg }
     for line in entry.output.split("\n") {
       text(fill: color)[#line]
       linebreak()
@@ -26,24 +26,24 @@
   }
 }
 
-#let _render-prompt-parts(user, hostname, path, t) = {
+#let _render-prompt-parts(user, hostname, path, theme) = {
   let user-host = user + "@" + hostname
   let colon = ":"
   let dollar = "$ "
-  text(fill: t.prompt-user)[#user-host]
-  text(fill: t.prompt-sym)[#colon]
-  text(fill: t.prompt-path)[#path]
-  text(fill: t.prompt-sym)[#dollar]
+  text(fill: theme.prompt-user)[#user-host]
+  text(fill: theme.prompt-sym)[#colon]
+  text(fill: theme.prompt-path)[#path]
+  text(fill: theme.prompt-sym)[#dollar]
 }
 
-#let _render-prompt(entry, t) = {
-  _render-prompt-parts(entry.user, entry.hostname, entry.path, t)
-  text(fill: t.fg)[#entry.command]
+#let _render-prompt(entry, theme) = {
+  _render-prompt-parts(entry.user, entry.hostname, entry.path, theme)
+  text(fill: theme.fg)[#entry.command]
 }
 
 /// Caret at the prompt (`0.85em` tall — small enough that line height stays stable when wrap moves it to the next line). Hidden frames omit the box entirely.
-#let _cursor-cell(t) = box(
-  fill: t.cursor,
+#let _cursor-cell(theme) = box(
+  fill: theme.cursor,
   width: 0.5em,
   height: 0.85em,
   baseline: 15%,
@@ -54,9 +54,10 @@
   session,
   user,
   hostname,
-  t,
-  f,
-  c,
+  theme,
+  font,
+  chrome,
+  style,
   term-width,
   typing: none,
   cursor-pos: none,
@@ -65,21 +66,21 @@
   overflow: "clip",
 ) = {
   let title = user + "@" + hostname
-  let title-bar = (c.bar)(title, t, f)
+  let title-bar = (chrome.bar)(title, theme, font)
 
   let body-content = {
-    set text(..f, fill: t.fg)
-    set par(leading: 0.4em)
+    set text(..font, fill: theme.fg)
+    set par(leading: style.leading)
 
     for entry in session.entries {
-      _render-prompt(entry, t)
+      _render-prompt(entry, theme)
       linebreak()
-      _render-output(entry, t, f)
+      _render-output(entry, theme, font)
     }
 
     // Final prompt
     {
-      _render-prompt-parts(user, hostname, session.final-path, t)
+      _render-prompt-parts(user, hostname, session.final-path, theme)
       if typing != none {
         if cursor-pos != none {
           // Mid-line cursor: split text at cursor position
@@ -87,16 +88,16 @@
           let pos = calc.min(cursor-pos, chars.len())
           let before = chars.slice(0, pos).join()
           let after = chars.slice(pos).join()
-          text(fill: t.fg)[#before]
-          if show-cursor { _cursor-cell(t) }
-          text(fill: t.fg)[#after]
+          text(fill: theme.fg)[#before]
+          if show-cursor { _cursor-cell(theme) }
+          text(fill: theme.fg)[#after]
         } else {
           // Default: cursor at end
-          text(fill: t.fg)[#typing]
-          if show-cursor { _cursor-cell(t) }
+          text(fill: theme.fg)[#typing]
+          if show-cursor { _cursor-cell(theme) }
         }
       } else if show-cursor {
-        _cursor-cell(t)
+        _cursor-cell(theme)
       }
     }
   }
@@ -110,13 +111,13 @@
       let available = term-height - title-h
 
       let one-line = measure(block({
-        set text(..f)
-        set par(leading: 0.4em)
+        set text(..font)
+        set par(leading: style.leading)
         [X]
       })).height
       let two-lines = measure(block({
-        set text(..f)
-        set par(leading: 0.4em)
+        set text(..font)
+        set par(leading: style.leading)
         [X]
         linebreak()
         [X]
@@ -167,27 +168,32 @@
         let is-last = pi == pages.len() - 1
 
         block(
-          fill: t.bg,
-          radius: c.radius,
+          fill: theme.bg,
+          radius: chrome.radius,
           clip: true,
           width: term-width,
           height: term-height,
           {
             if title-bar != none { title-bar }
             block(width: 100%, height: available, clip: true, {
-              block(inset: (x: 12pt, y: 6pt), width: term-width, {
-                set text(..f, fill: t.fg)
-                set par(leading: 0.4em)
+              block(inset: style.inset, width: term-width, {
+                set text(..font, fill: theme.fg)
+                set par(leading: style.leading)
                 for entry in page.items {
-                  _render-prompt(entry, t)
+                  _render-prompt(entry, theme)
                   linebreak()
-                  _render-output(entry, t, f)
+                  _render-output(entry, theme, font)
                 }
                 if is-last and final-fits {
-                  _render-prompt-parts(user, hostname, session.final-path, t)
-                  if typing != none { text(fill: t.fg)[#typing] }
+                  _render-prompt-parts(
+                    user,
+                    hostname,
+                    session.final-path,
+                    theme,
+                  )
+                  if typing != none { text(fill: theme.fg)[#typing] }
                   if show-cursor {
-                    _cursor-cell(t)
+                    _cursor-cell(theme)
                   }
                 }
               })
@@ -199,21 +205,21 @@
       if not final-fits {
         pagebreak()
         block(
-          fill: t.bg,
-          radius: c.radius,
+          fill: theme.bg,
+          radius: chrome.radius,
           clip: true,
           width: term-width,
           height: term-height,
           {
             if title-bar != none { title-bar }
             block(width: 100%, height: available, clip: true, {
-              block(inset: (x: 12pt, y: 6pt), width: term-width, {
-                set text(..f, fill: t.fg)
-                set par(leading: 0.4em)
-                _render-prompt-parts(user, hostname, session.final-path, t)
-                if typing != none { text(fill: t.fg)[#typing] }
+              block(inset: style.inset, width: term-width, {
+                set text(..font, fill: theme.fg)
+                set par(leading: style.leading)
+                _render-prompt-parts(user, hostname, session.final-path, theme)
+                if typing != none { text(fill: theme.fg)[#typing] }
                 if show-cursor {
-                  _cursor-cell(t)
+                  _cursor-cell(theme)
                 }
               })
             })
@@ -226,8 +232,8 @@
     // Use grid(rows: auto, 1fr) so the title bar takes its natural height
     // and the body fills the rest — no manual title-bar measurement needed.
     block(
-      fill: t.bg,
-      radius: c.radius,
+      fill: theme.bg,
+      radius: chrome.radius,
       clip: true,
       width: term-width,
       height: term-height,
@@ -238,7 +244,7 @@
         layout(size => context {
           let available = size.height
           let body-block = block(
-            inset: (x: 12pt, y: 6pt),
+            inset: style.inset,
             width: term-width,
             body-content,
           )
@@ -246,13 +252,13 @@
 
           // Measure line-to-line step for snapping to whole lines
           let one-line = measure(block({
-            set text(..f)
-            set par(leading: 0.4em)
+            set text(..font)
+            set par(leading: style.leading)
             [X]
           })).height
           let two-lines = measure(block({
-            set text(..f)
-            set par(leading: 0.4em)
+            set text(..font)
+            set par(leading: style.leading)
             [X]
             linebreak()
             [X]
@@ -263,10 +269,7 @@
             if body-h > available {
               // Snap to whole-line boundary, accounting for the body inset.
               // Line tops sit at inset-y + k*line-step inside the body block.
-              // +1 extra line guarantees no partial-line artifact even when
-              // line-step (measured from plain text) drifts slightly from
-              // actual content (colored/bold prompts, syntax highlighting).
-              let inset-y = 6pt
+              let inset-y = style.inset.at("y", default: 6pt)
               let lines-to-skip = calc.max(0, calc.ceil(
                 (body-h - available - inset-y) / line-step,
               ))
@@ -278,9 +281,15 @@
       ),
     )
   } else {
-    block(fill: t.bg, radius: c.radius, clip: true, width: term-width, {
-      if title-bar != none { title-bar }
-      block(inset: (x: 12pt, y: 6pt), width: 100%, body-content)
-    })
+    block(
+      fill: theme.bg,
+      radius: chrome.radius,
+      clip: true,
+      width: term-width,
+      {
+        if title-bar != none { title-bar }
+        block(inset: style.inset, width: 100%, body-content)
+      },
+    )
   }
 }

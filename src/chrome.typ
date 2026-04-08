@@ -5,8 +5,8 @@
 // macOS — three colored circles, centered title, rounded corners
 // ---------------------------------------------------------------------------
 #let _chrome-macos = (
-  bar: (title, t, f) => block(
-    fill: t.title-bg,
+  bar: (title, theme, font) => block(
+    fill: theme.title-bg,
     width: 100%,
     inset: (x: 12pt, y: 8pt),
     {
@@ -16,7 +16,7 @@
       h(6pt)
       box(circle(fill: rgb("#28c840"), radius: 5pt))
       h(1fr)
-      if title != "" { text(..f, fill: t.title-fg)[#title] }
+      if title != "" { text(..font, fill: theme.title-fg)[#title] }
       h(1fr)
       box(width: 42pt) // balance the circles
     },
@@ -35,18 +35,21 @@
 )
 
 #let _chrome-windows = (
-  bar: (title, t, f) => block(
-    fill: t.title-bg,
+  bar: (title, theme, font) => block(
+    fill: theme.title-bg,
     width: 100%,
     inset: (x: 12pt, y: 6pt),
     {
       if title != "" {
-        box(height: 22pt, align(horizon, text(..f, fill: t.title-fg)[#title]))
+        box(height: 22pt, align(horizon, text(
+          ..font,
+          fill: theme.title-fg,
+        )[#title]))
       }
       h(1fr)
-      _win-btn([\u{2500}], f, t.title-fg) // ─ minimize
-      _win-btn([\u{25A1}], f, t.title-fg) // □ maximize
-      _win-btn([\u{2715}], f, white, bg: rgb("#e81123")) // ✕ close
+      _win-btn([\u{2500}], font, theme.title-fg) // ─ minimize
+      _win-btn([\u{25A1}], font, theme.title-fg) // □ maximize
+      _win-btn([\u{2715}], font, white, bg: rgb("#e81123")) // ✕ close
     },
   ),
   radius: 0pt,
@@ -56,23 +59,25 @@
 // Windows Terminal — tab-style title, modern buttons, rounded top
 // ---------------------------------------------------------------------------
 #let _chrome-windows-terminal = (
-  bar: (title, t, f) => block(
-    fill: t.title-bg,
+  bar: (title, theme, font) => block(
+    fill: theme.title-bg,
     width: 100%,
     inset: (x: 8pt, y: 5pt),
     {
       box(
-        fill: t.bg,
+        fill: theme.bg,
         radius: (top-left: 6pt, top-right: 6pt),
         inset: (x: 14pt, y: 5pt),
         {
-          if title != "" { text(..f, fill: t.title-fg, size: 8pt)[#title] }
+          if title != "" {
+            text(..font, fill: theme.title-fg, size: 8pt)[#title]
+          }
         },
       )
       h(1fr)
-      _win-btn([\u{2500}], f, t.title-fg)
-      _win-btn([\u{25A1}], f, t.title-fg)
-      _win-btn([\u{2715}], f, white, bg: rgb("#e81123"))
+      _win-btn([\u{2500}], font, theme.title-fg)
+      _win-btn([\u{25A1}], font, theme.title-fg)
+      _win-btn([\u{2715}], font, white, bg: rgb("#e81123"))
     },
   ),
   radius: (top: 8pt, bottom: 0pt),
@@ -82,22 +87,22 @@
 // GNOME — centered title, single close circle on the right
 // ---------------------------------------------------------------------------
 #let _chrome-gnome = (
-  bar: (title, t, f) => block(
-    fill: t.title-bg,
+  bar: (title, theme, font) => block(
+    fill: theme.title-bg,
     width: 100%,
     inset: (x: 12pt, y: 7pt),
     {
       box(width: 22pt) // balance the close button
       h(1fr)
-      if title != "" { text(..f, fill: t.title-fg)[#title] }
+      if title != "" { text(..font, fill: theme.title-fg)[#title] }
       h(1fr)
       box(
         circle(
-          fill: t.title-fg.transparentize(50%),
+          fill: theme.title-fg.transparentize(50%),
           radius: 10pt,
           align(center + horizon, text(
-            ..f,
-            fill: t.title-bg,
+            ..font,
+            fill: theme.title-bg,
             size: 9pt,
             weight: "bold",
           )[\u{2715}]),
@@ -112,7 +117,7 @@
 // Plain — no title bar, minimal radius
 // ---------------------------------------------------------------------------
 #let _chrome-plain = (
-  bar: (title, t, f) => none,
+  bar: (title, theme, font) => none,
   radius: 4pt,
 )
 

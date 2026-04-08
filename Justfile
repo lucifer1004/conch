@@ -179,9 +179,18 @@ gif src="demo/demo.typ" out="" frames_dir="" fps="10" hold_after_output="" hold_
     fi
     printf 'wrote %s (%d frames @ %s fps)\n' "${out}" "${n}" "${fps}"
 
-# Compile demo/*.typ (for screenshots); imports `../lib.typ`.
+# PNG screenshots: skip `demo/demo.typ` (`just gif`). `paginate.typ` exports every page (`name-{0p}.png`);
+
+# all other demos force page 1 only (`name.png`). `{0p}` must stay literal (just would treat `{p}` as a variable).
 [group("build")]
 demos: build
-    for f in demo/*.typ; do {{ typst }} compile --root . "$f" "${f%.typ}.pdf"; done
+    for f in demo/*.typ; do \
+      [[ "$f" == demo/demo.typ ]] && continue; \
+      if [[ "$f" == demo/paginate.typ ]]; then \
+        {{ typst }} compile --root . -f png "$f" "${f%.typ}-{0p}.png"; \
+      else \
+        {{ typst }} compile --root . -f png --pages 1 "$f" "${f%.typ}.png"; \
+      fi; \
+    done
 
 alias f := fmt

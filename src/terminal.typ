@@ -1,4 +1,4 @@
-#import "theme.typ": _resolve-font, _resolve-theme
+#import "theme.typ": _resolve-font, _resolve-style, _resolve-theme
 #import "chrome.typ": _resolve-chrome
 #import "session.typ": _execute-session, _parse-commands, _process-keyline
 #import "render.typ": _render-frame
@@ -59,6 +59,7 @@
   theme: "dracula",
   font: auto,
   chrome: "macos",
+  style: auto,
   width: auto,
   height: auto,
   files: (:),
@@ -67,18 +68,20 @@
 ) = {
   let commands = _parse-commands(body)
   let session = _execute-session(user, hostname, files, commands)
-  let t = _resolve-theme(theme)
-  let f = _resolve-font(font)
-  let c = _resolve-chrome(chrome)
+  let theme = _resolve-theme(theme)
+  let font = _resolve-font(font)
+  let chrome = _resolve-chrome(chrome)
+  let style = _resolve-style(style)
   let term-width = if width == auto { 560pt } else { width }
   let term-height = if height == auto { auto } else { height }
   _render-frame(
     session,
     user,
     hostname,
-    t,
-    f,
-    c,
+    theme,
+    font,
+    chrome,
+    style,
     term-width,
     show-cursor: show-cursor,
     term-height: term-height,
@@ -96,6 +99,7 @@
   theme: "dracula",
   font: auto,
   chrome: "macos",
+  style: auto,
   width: auto,
   height: auto,
   files: (:),
@@ -110,6 +114,7 @@
     theme: theme,
     font: font,
     chrome: chrome,
+    style: style,
     width: width,
     height: height,
     files: files,
@@ -126,6 +131,7 @@
   theme: "dracula",
   font: auto,
   chrome: "macos",
+  style: auto,
   width: auto,
   height: auto,
   files: (:),
@@ -136,9 +142,10 @@
   set page(height: auto, width: auto, margin: 0.5in)
   let h = _hold-per-line-defaults + hold + _hold-input-patch-line()
   let commands = _parse-commands(body)
-  let t = _resolve-theme(theme)
-  let f = _resolve-font(font)
-  let c = _resolve-chrome(chrome)
+  let theme = _resolve-theme(theme)
+  let font = _resolve-font(font)
+  let chrome = _resolve-chrome(chrome)
+  let style = _resolve-style(style)
   let term-width = if width == auto { 560pt } else { width }
   let term-height = if height == auto { auto } else { height }
   let run-cmds = commands.slice(0, commands.len() - 1)
@@ -152,9 +159,10 @@
       session,
       user,
       hostname,
-      t,
-      f,
-      c,
+      theme,
+      font,
+      chrome,
+      style,
       term-width,
       typing: typing,
       term-height: term-height,
@@ -166,9 +174,10 @@
         session,
         user,
         hostname,
-        t,
-        f,
-        c,
+        theme,
+        font,
+        chrome,
+        style,
         term-width,
         typing: typing,
         term-height: term-height,
@@ -187,6 +196,7 @@
   theme: "dracula",
   font: auto,
   chrome: "macos",
+  style: auto,
   width: auto,
   height: auto,
   files: (:),
@@ -197,9 +207,10 @@
   set page(height: auto, width: auto, margin: 0.5in)
   let h = _hold-per-char-defaults + hold + _hold-input-patch-char()
   let commands = _parse-commands(body)
-  let t = _resolve-theme(theme)
-  let f = _resolve-font(font)
-  let c = _resolve-chrome(chrome)
+  let theme = _resolve-theme(theme)
+  let font = _resolve-font(font)
+  let chrome = _resolve-chrome(chrome)
+  let style = _resolve-style(style)
   let term-width = if width == auto { 560pt } else { width }
   let term-height = if height == auto { auto } else { height }
   let run-cmds = commands.slice(0, commands.len() - 1)
@@ -240,9 +251,10 @@
           session,
           user,
           hostname,
-          t,
-          f,
-          c,
+          theme,
+          font,
+          chrome,
+          style,
           term-width,
           typing: state.text,
           cursor-pos: state.cursor,
@@ -261,9 +273,10 @@
           session,
           user,
           hostname,
-          t,
-          f,
-          c,
+          theme,
+          font,
+          chrome,
+          style,
           term-width,
           typing: partial,
           term-height: term-height,
@@ -281,9 +294,10 @@
       session-after,
       user,
       hostname,
-      t,
-      f,
-      c,
+      theme,
+      font,
+      chrome,
+      style,
       term-width,
       typing: "",
       term-height: term-height,
@@ -295,9 +309,10 @@
         session-after,
         user,
         hostname,
-        t,
-        f,
-        c,
+        theme,
+        font,
+        chrome,
+        style,
         term-width,
         typing: "",
         term-height: term-height,
@@ -316,9 +331,10 @@
           session-final,
           user,
           hostname,
-          t,
-          f,
-          c,
+          theme,
+          font,
+          chrome,
+          style,
           term-width,
           typing: state.text,
           cursor-pos: state.cursor,
@@ -335,9 +351,10 @@
           session-final,
           user,
           hostname,
-          t,
-          f,
-          c,
+          theme,
+          font,
+          chrome,
+          style,
           term-width,
           typing: partial,
           term-height: term-height,
@@ -359,9 +376,10 @@
         session-final,
         user,
         hostname,
-        t,
-        f,
-        c,
+        theme,
+        font,
+        chrome,
+        style,
         term-width,
         typing: last-data.final,
         show-cursor: show-cursor,
