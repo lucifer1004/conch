@@ -12,6 +12,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "bare-vfs"
+version = "0.1.0"
+
+[[package]]
 name = "bstr"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -31,6 +35,7 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 name = "conch-wasm"
 version = "0.1.0"
 dependencies = [
+ "bare-vfs",
  "globset",
  "lexopt",
  "serde",

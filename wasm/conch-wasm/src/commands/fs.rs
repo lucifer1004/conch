@@ -166,7 +166,7 @@ impl Shell {
                 continue;
             }
             let path = self.resolve(arg);
-            self.fs.entry(path).or_insert(FsEntry::file(String::new()));
+            self.fs.touch(&path);
         }
         (String::new(), 0)
     }
@@ -199,12 +199,12 @@ impl Shell {
                     let prefix = format!("{}/", path);
                     let to_rm: Vec<String> = self
                         .fs
-                        .keys()
-                        .filter(|k| *k == &path || k.starts_with(&prefix))
-                        .cloned()
+                        .paths()
+                        .filter(|k| *k == path || k.starts_with(&prefix))
+                        .map(|s| s.to_string())
                         .collect();
-                    for k in to_rm {
-                        self.fs.remove(&k);
+                    for k in &to_rm {
+                        self.fs.remove(k);
                     }
                 }
                 Some(e) if e.is_file() => {
@@ -315,8 +315,8 @@ impl Shell {
         };
 
         let mut results = Vec::new();
-        for (p, entry) in &self.fs {
-            if p != &root && !p.starts_with(&prefix) {
+        for (p, entry) in self.fs.iter() {
+            if p != root && !p.starts_with(&prefix) {
                 continue;
             }
 
@@ -335,7 +335,7 @@ impl Shell {
                 }
             }
 
-            let display = if p == &root {
+            let display = if p == root {
                 ".".to_string()
             } else {
                 let rel = &p[root.len()..];
@@ -400,19 +400,11 @@ impl Shell {
 
         for arg in &args[1..] {
             let path = self.resolve(arg);
-            match self.fs.get(&path).cloned() {
-                Some(FsEntry::File { content, .. }) => {
-                    self.fs.insert(path, FsEntry::file_with_mode(content, mode));
-                }
-                Some(FsEntry::Dir { .. }) => {
-                    self.fs.insert(path, FsEntry::Dir { mode });
-                }
-                None => {
-                    return (
-                        format!("chmod: cannot access '{}': No such file or directory", arg),
-                        1,
-                    )
-                }
+            if let Err(_) = self.fs.set_mode(&path, mode) {
+                return (
+                    format!("chmod: cannot access '{}': No such file or directory", arg),
+                    1,
+                );
             }
         }
         (String::new(), 0)

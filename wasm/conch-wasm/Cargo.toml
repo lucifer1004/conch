@@ -1,0 +1,18 @@
+[package]
+name = "conch-wasm"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "conch"
+crate-type = ["cdylib"]
+
+[dependencies]
+bare-vfs = { path = "../bare-vfs" }
+wasm-minimal-protocol = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+shlex = "1"
+shellexpand = { version = "3", default-features = false, features = ["base-0", "tilde"] }
+globset = "0.4"
+lexopt = "0.3"

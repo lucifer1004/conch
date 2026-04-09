@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
+use bare_vfs::MemFs;
 use globset::Glob;
 
 use crate::types::*;
@@ -17,7 +18,7 @@ fn parse_mode_digits(decimal: u16) -> u16 {
 
 /// Virtual shell state
 pub struct Shell {
-    pub(crate) fs: BTreeMap<String, FsEntry>,
+    pub(crate) fs: MemFs,
     pub(crate) cwd: String,
     pub(crate) user: String,
     pub(crate) hostname: String,
@@ -28,17 +29,11 @@ pub struct Shell {
 
 impl Shell {
     pub fn new(config: &Config) -> Self {
-        let mut fs = BTreeMap::new();
+        let mut fs = MemFs::new();
         let home = &config.home;
 
-        // Create root + home hierarchy
-        fs.insert("/".to_string(), FsEntry::dir());
-        let mut path = String::new();
-        for part in home.split('/').filter(|s| !s.is_empty()) {
-            path.push('/');
-            path.push_str(part);
-            fs.insert(path.clone(), FsEntry::dir());
-        }
+        // Create home hierarchy (root `/` is created by MemFs::new)
+        fs.create_dir_all(home);
 
         // Populate user-provided files
         for (file_path, spec) in &config.files {
@@ -49,12 +44,8 @@ impl Shell {
             };
 
             // Ensure parent directories exist
-            let parts: Vec<&str> = full.split('/').filter(|s| !s.is_empty()).collect();
-            let mut dir = String::new();
-            for p in &parts[..parts.len().saturating_sub(1)] {
-                dir.push('/');
-                dir.push_str(p);
-                fs.entry(dir.clone()).or_insert(FsEntry::dir());
+            if let Some(parent) = MemFs::parent(&full) {
+                fs.create_dir_all(parent);
             }
 
             let entry = match spec {
@@ -119,45 +110,18 @@ impl Shell {
         } else {
             format!("{}/{}", self.cwd, expanded)
         };
-
-        let mut parts: Vec<&str> = Vec::new();
-        for seg in abs.split('/') {
-            match seg {
-                "" | "." => {}
-                ".." => {
-                    parts.pop();
-                }
-                _ => parts.push(seg),
-            }
-        }
-        if parts.is_empty() {
-            "/".to_string()
-        } else {
-            format!("/{}", parts.join("/"))
-        }
+        MemFs::normalize(&abs)
     }
 
     /// List direct children of a directory, sorted by name.
     /// Returns (name, is_dir, mode).
     pub fn list_dir(&self, dir: &str) -> Vec<(String, bool, u16)> {
-        let prefix = if dir == "/" {
-            "/".to_string()
-        } else {
-            format!("{}/", dir)
-        };
-        let mut entries = Vec::new();
-        for (p, entry) in &self.fs {
-            if p == dir || !p.starts_with(&prefix) {
-                continue;
-            }
-            let rel = &p[prefix.len()..];
-            if rel.is_empty() || rel.contains('/') {
-                continue;
-            }
-            entries.push((rel.to_string(), entry.is_dir(), entry.mode()));
-        }
-        entries.sort_by(|a, b| a.0.cmp(&b.0));
-        entries
+        self.fs
+            .read_dir(dir)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|e| (e.name, e.is_dir, e.mode))
+            .collect()
     }
 
     /// Expand glob patterns in arguments
@@ -210,12 +174,7 @@ impl Shell {
 
     /// Create directory and all parents
     pub fn mkdir_p(&mut self, abs_path: &str) {
-        let mut current = String::new();
-        for part in abs_path.split('/').filter(|s| !s.is_empty()) {
-            current.push('/');
-            current.push_str(part);
-            self.fs.entry(current.clone()).or_insert(FsEntry::dir());
-        }
+        self.fs.create_dir_all(abs_path);
     }
 
     /// Build an output entry

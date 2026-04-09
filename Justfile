@@ -35,7 +35,7 @@ default:
 
 [group("build")]
 build:
-    cd wasm && {{ cargo }} build --release --target {{ wasm-target }}
+    cd wasm && {{ cargo }} build -p conch-wasm --release --target {{ wasm-target }}
     cp wasm/target/{{ wasm-target }}/release/conch.wasm conch.wasm
 
 [group("build")]
