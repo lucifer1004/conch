@@ -193,4 +193,29 @@ demos: build
       fi; \
     done
 
+# Copy package files to a directory for Typst Universe submission.
+
+# Usage: just package /path/to/typst-packages/packages/preview/conch/0.1.0
+[arg("dest", help="Target directory (e.g. ../typst-packages/packages/preview/conch/0.1.0)")]
+[group("build")]
+package dest: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dest="{{ dest }}"
+    rm -rf "$dest"
+    mkdir -p "$dest/src" "$dest/template" "$dest/demo"
+    # Core package files
+    cp typst.toml lib.typ conch.wasm LICENSE README.md CONTRIBUTING_GUIDE.md thumbnail.png "$dest/"
+    cp src/*.typ "$dest/src/"
+    cp template/main.typ "$dest/template/"
+    # README images (committed to repo but excluded from download bundle via typst.toml)
+    cp demo/demo.gif demo/touying.gif demo/frame.png demo/shell.png demo/pipes.png \
+       demo/permissions.png demo/script.png demo/themes.png demo/chrome.png \
+       demo/paginate-1.png demo/paginate-2.png "$dest/demo/"
+    echo "Packaged to $dest"
+    echo "Files:"
+    find "$dest" -type f | sort | while read -r f; do
+      printf "  %s (%s)\n" "${f#$dest/}" "$(du -h "$f" | cut -f1 | tr -d ' ')"
+    done
+
 alias f := fmt

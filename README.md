@@ -642,6 +642,8 @@ Use `terminal-frames()` to generate an array of frame content for slide framewor
 | `"key-frames"` | Pre/post execution only | Dense sessions     |
 | `"per-char"`   | One per keystroke       | Short demos        |
 
+![Touying integration demo](./demo/touying.gif)
+
 See `demo/touying.typ` for a full working example.
 
 ## Raw Execution

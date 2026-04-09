@@ -8,7 +8,7 @@ license = "MIT"
 description = "Simulate a shell and render terminal sessions in documents."
 keywords = ["terminal", "shell", "ansi", "wasm", "simulator"]
 categories = ["integration", "fun"]
-exclude = ["wasm/", "Justfile", "demo/", "_vendor/", ".jj", ".omc", ".prettierrc.json", ".github/"]
+exclude = ["wasm/", "Justfile", "demo/", "_vendor/", "CONTRIBUTING_GUIDE.md"]
 
 [template]
 path = "template"
