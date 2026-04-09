@@ -1,13 +1,15 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-/// A node in the virtual filesystem — either a file or a directory.
+/// A node in the virtual filesystem — either a file, directory, or symlink.
 #[derive(Debug, Clone)]
 pub enum Entry {
     /// A regular file with byte content and a Unix permission mode.
     File { content: Vec<u8>, mode: u16 },
     /// A directory with a Unix permission mode.
     Dir { mode: u16 },
+    /// A symbolic link pointing to `target`. Mode is always `0o777`.
+    Symlink { target: String },
 }
 
 impl Entry {
@@ -37,6 +39,13 @@ impl Entry {
         Entry::Dir { mode }
     }
 
+    /// Create a symbolic link pointing to `target`.
+    pub fn symlink(target: impl Into<String>) -> Self {
+        Entry::Symlink {
+            target: target.into(),
+        }
+    }
+
     /// Returns `true` if this entry is a directory.
     pub fn is_dir(&self) -> bool {
         matches!(self, Entry::Dir { .. })
@@ -47,35 +56,41 @@ impl Entry {
         matches!(self, Entry::File { .. })
     }
 
-    /// Returns the raw file content as bytes, or `None` for directories.
+    /// Returns `true` if this entry is a symbolic link.
+    pub fn is_symlink(&self) -> bool {
+        matches!(self, Entry::Symlink { .. })
+    }
+
+    /// Returns the raw file content as bytes, or `None` for directories/symlinks.
     pub fn content(&self) -> Option<&[u8]> {
         match self {
             Entry::File { content, .. } => Some(content),
-            Entry::Dir { .. } => None,
+            Entry::Dir { .. } | Entry::Symlink { .. } => None,
         }
     }
 
-    /// Returns the file content as a UTF-8 string, or `None` for directories
+    /// Returns the file content as a UTF-8 string, or `None` for directories/symlinks
     /// or files with invalid UTF-8.
     pub fn content_str(&self) -> Option<&str> {
         match self {
             Entry::File { content, .. } => core::str::from_utf8(content).ok(),
-            Entry::Dir { .. } => None,
+            Entry::Dir { .. } | Entry::Symlink { .. } => None,
         }
     }
 
-    /// Returns the size of the file content in bytes, or 0 for directories.
+    /// Returns the size of the file content in bytes, or 0 for directories/symlinks.
     pub fn len(&self) -> usize {
         match self {
             Entry::File { content, .. } => content.len(),
-            Entry::Dir { .. } => 0,
+            Entry::Dir { .. } | Entry::Symlink { .. } => 0,
         }
     }
 
-    /// Returns the Unix permission mode.
+    /// Returns the Unix permission mode. Symlinks always report `0o777`.
     pub fn mode(&self) -> u16 {
         match self {
             Entry::File { mode, .. } | Entry::Dir { mode, .. } => *mode,
+            Entry::Symlink { .. } => 0o777,
         }
     }
 
@@ -116,6 +131,8 @@ pub enum EntryRef<'a> {
     File { content: &'a [u8], mode: u16 },
     /// A directory.
     Dir { mode: u16 },
+    /// A symbolic link with a borrowed target path.
+    Symlink { target: &'a str },
 }
 
 impl<'a> EntryRef<'a> {
@@ -129,35 +146,41 @@ impl<'a> EntryRef<'a> {
         matches!(self, EntryRef::File { .. })
     }
 
-    /// Returns the raw file content as bytes, or `None` for directories.
+    /// Returns `true` if this entry is a symbolic link.
+    pub fn is_symlink(&self) -> bool {
+        matches!(self, EntryRef::Symlink { .. })
+    }
+
+    /// Returns the raw file content as bytes, or `None` for directories/symlinks.
     pub fn content(&self) -> Option<&'a [u8]> {
         match self {
             EntryRef::File { content, .. } => Some(content),
-            EntryRef::Dir { .. } => None,
+            EntryRef::Dir { .. } | EntryRef::Symlink { .. } => None,
         }
     }
 
-    /// Returns the file content as a UTF-8 string, or `None` for directories
+    /// Returns the file content as a UTF-8 string, or `None` for directories/symlinks
     /// or files with invalid UTF-8.
     pub fn content_str(&self) -> Option<&'a str> {
         match self {
             EntryRef::File { content, .. } => core::str::from_utf8(content).ok(),
-            EntryRef::Dir { .. } => None,
+            EntryRef::Dir { .. } | EntryRef::Symlink { .. } => None,
         }
     }
 
-    /// Returns the size of the file content in bytes, or 0 for directories.
+    /// Returns the size of the file content in bytes, or 0 for directories/symlinks.
     pub fn len(&self) -> usize {
         match self {
             EntryRef::File { content, .. } => content.len(),
-            EntryRef::Dir { .. } => 0,
+            EntryRef::Dir { .. } | EntryRef::Symlink { .. } => 0,
         }
     }
 
-    /// Returns the Unix permission mode.
+    /// Returns the Unix permission mode. Symlinks always report `0o777`.
     pub fn mode(&self) -> u16 {
         match self {
             EntryRef::File { mode, .. } | EntryRef::Dir { mode, .. } => *mode,
+            EntryRef::Symlink { .. } => 0o777,
         }
     }
 

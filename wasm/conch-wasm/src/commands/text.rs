@@ -2,6 +2,53 @@ use crate::ansi;
 use crate::shell::Shell;
 
 impl Shell {
+    pub fn cmd_printf(&self, args: &[String]) -> (String, i32) {
+        if args.is_empty() {
+            return ("printf: missing format string".into(), 1);
+        }
+        let fmt = &args[0];
+        let mut positional_args = args[1..].iter();
+        let mut output = String::new();
+        let mut chars = fmt.chars().peekable();
+
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('n') => output.push('\n'),
+                    Some('t') => output.push('\t'),
+                    Some('\\') => output.push('\\'),
+                    Some(other) => {
+                        output.push('\\');
+                        output.push(other);
+                    }
+                    None => output.push('\\'),
+                }
+            } else if c == '%' {
+                match chars.next() {
+                    Some('s') => {
+                        let val = positional_args.next().map(|s| s.as_str()).unwrap_or("");
+                        output.push_str(val);
+                    }
+                    Some('d') => {
+                        let val = positional_args.next().map(|s| s.as_str()).unwrap_or("0");
+                        let n: i64 = val.parse().unwrap_or(0);
+                        output.push_str(&n.to_string());
+                    }
+                    Some('%') => output.push('%'),
+                    Some(other) => {
+                        output.push('%');
+                        output.push(other);
+                    }
+                    None => output.push('%'),
+                }
+            } else {
+                output.push(c);
+            }
+        }
+
+        (output, 0)
+    }
+
     pub fn cmd_echo(&self, args: &[String]) -> (String, i32) {
         let mut interpret_escapes = false;
         let mut skip = 0;
@@ -441,10 +488,111 @@ impl Shell {
         (results.join("\n"), 0)
     }
 
+    pub fn cmd_tac(&self, args: &[String], stdin: Option<&str>) -> (String, i32) {
+        let file = args.iter().find(|a| !a.starts_with('-'));
+        let input = match file {
+            Some(f) => match self.resolve_input(Some(f), stdin) {
+                Ok(s) => s,
+                Err(e) => return (format!("tac: {}", e), 1),
+            },
+            None => stdin.unwrap_or("").to_string(),
+        };
+        let reversed: Vec<&str> = input.lines().rev().collect();
+        (reversed.join("\n"), 0)
+    }
+
+    pub fn cmd_nl(&self, args: &[String], stdin: Option<&str>) -> (String, i32) {
+        // Support -b a (number all lines, the default behaviour we implement)
+        let mut file = None;
+        let mut i = 0;
+        while i < args.len() {
+            match args[i].as_str() {
+                "-b" => {
+                    i += 2; // skip flag and its value
+                }
+                s if !s.starts_with('-') => {
+                    file = Some(args[i].clone());
+                    i += 1;
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+
+        let input = match self.resolve_input(file.as_deref(), stdin) {
+            Ok(s) => s,
+            Err(e) => return (format!("nl: {}", e), 1),
+        };
+
+        let numbered: Vec<String> = input
+            .lines()
+            .enumerate()
+            .map(|(i, line)| format!("{:>6}\t{}", i + 1, line))
+            .collect();
+        (numbered.join("\n"), 0)
+    }
+
+    pub fn cmd_paste(&self, args: &[String], stdin: Option<&str>) -> (String, i32) {
+        let mut delimiter = '\t';
+        let mut files: Vec<String> = Vec::new();
+
+        let mut i = 0;
+        while i < args.len() {
+            match args[i].as_str() {
+                "-d" if i + 1 < args.len() => {
+                    delimiter = args[i + 1].chars().next().unwrap_or('\t');
+                    i += 2;
+                }
+                s if s.starts_with("-d") && s.len() > 2 => {
+                    delimiter = s.chars().nth(2).unwrap_or('\t');
+                    i += 1;
+                }
+                _ => {
+                    files.push(args[i].clone());
+                    i += 1;
+                }
+            }
+        }
+
+        if files.is_empty() {
+            // paste from stdin only
+            return (stdin.unwrap_or("").to_string(), 0);
+        }
+
+        let mut columns: Vec<Vec<String>> = Vec::new();
+        for f in &files {
+            let path = self.resolve(f);
+            let content = match self.fs.read_to_string(&path) {
+                Ok(s) => s.to_string(),
+                Err(e) => return (format!("paste: {}: {}", f, e), 1),
+            };
+            columns.push(content.lines().map(|l| l.to_string()).collect());
+        }
+
+        let max_lines = columns.iter().map(|c| c.len()).max().unwrap_or(0);
+        let delim_str = delimiter.to_string();
+        let out: Vec<String> = (0..max_lines)
+            .map(|i| {
+                columns
+                    .iter()
+                    .map(|col| col.get(i).map(|s| s.as_str()).unwrap_or(""))
+                    .collect::<Vec<_>>()
+                    .join(&delim_str)
+            })
+            .collect();
+
+        (out.join("\n"), 0)
+    }
+
     // -- helpers --
 
     /// Resolve input from a file path or stdin
-    fn resolve_input(&self, file: Option<&str>, stdin: Option<&str>) -> Result<String, String> {
+    pub(crate) fn resolve_input(
+        &self,
+        file: Option<&str>,
+        stdin: Option<&str>,
+    ) -> Result<String, String> {
         match file {
             Some(f) => {
                 let path = self.resolve(f);

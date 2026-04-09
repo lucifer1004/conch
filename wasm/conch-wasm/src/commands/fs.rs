@@ -388,33 +388,122 @@ impl Shell {
         (String::new(), 0)
     }
 
-    pub fn cmd_basename(&self, args: &[String]) -> (String, i32) {
-        if args.is_empty() {
-            return ("basename: missing operand".into(), 1);
-        }
-        let name = args[0].rsplit('/').next().unwrap_or(&args[0]);
-        if args.len() > 1 {
-            if let Some(stripped) = name.strip_suffix(args[1].as_str()) {
-                return (stripped.to_string(), 0);
+    pub fn cmd_rmdir(&mut self, args: &[String]) -> (String, i32) {
+        for arg in args {
+            if arg.starts_with('-') {
+                continue;
             }
+            let path = self.resolve(arg);
+            match self.fs.get(&path) {
+                None => {
+                    return (
+                        format!(
+                            "rmdir: failed to remove '{}': No such file or directory",
+                            arg
+                        ),
+                        1,
+                    )
+                }
+                Some(e) if e.is_file() => {
+                    return (
+                        format!("rmdir: failed to remove '{}': Not a directory", arg),
+                        1,
+                    )
+                }
+                _ => {}
+            }
+            // Check if directory is empty
+            let entries = self.fs.read_dir(&path).unwrap_or_default();
+            if !entries.is_empty() {
+                return (
+                    format!("rmdir: failed to remove '{}': Directory not empty", arg),
+                    1,
+                );
+            }
+            self.fs.remove(&path);
         }
-        (name.to_string(), 0)
+        (String::new(), 0)
     }
 
-    pub fn cmd_dirname(&self, args: &[String]) -> (String, i32) {
-        if args.is_empty() {
-            return ("dirname: missing operand".into(), 1);
-        }
-        let dir = if let Some((d, _)) = args[0].rsplit_once('/') {
-            if d.is_empty() {
-                "/"
-            } else {
-                d
+    pub fn cmd_mktemp(&mut self, args: &[String]) -> (String, i32) {
+        let mut make_dir = false;
+        for arg in args {
+            if arg == "-d" {
+                make_dir = true;
             }
+        }
+
+        // Ensure /tmp exists
+        self.fs.create_dir_all("/tmp");
+
+        // Generate a unique name using a simple counter approach
+        let name = self.generate_tmpname();
+        let path = format!("/tmp/{}", name);
+
+        if make_dir {
+            self.fs.insert(path.clone(), FsEntry::dir());
         } else {
-            "."
-        };
-        (dir.to_string(), 0)
+            self.fs.insert(path.clone(), FsEntry::file(String::new()));
+        }
+
+        (path, 0)
+    }
+
+    fn generate_tmpname(&self) -> String {
+        // Count existing /tmp entries to create unique suffix
+        let count = self
+            .fs
+            .read_dir("/tmp")
+            .map(|entries| entries.len())
+            .unwrap_or(0);
+        format!("tmp.{:010}", count)
+    }
+
+    pub fn cmd_ln(&mut self, args: &[String]) -> (String, i32) {
+        let mut symbolic = false;
+        let mut positional = Vec::new();
+
+        for arg in args {
+            match arg.as_str() {
+                "-s" => symbolic = true,
+                s if !s.starts_with('-') => positional.push(s),
+                _ => {}
+            }
+        }
+
+        if positional.len() < 2 {
+            return ("ln: missing operand".into(), 1);
+        }
+        if !symbolic {
+            return ("ln: hard links not supported".into(), 1);
+        }
+
+        let target = positional[0];
+        let link_path = self.resolve(positional[1]);
+        if self.fs.exists(&link_path) {
+            return (
+                format!(
+                    "ln: failed to create symbolic link '{}': File exists",
+                    positional[1]
+                ),
+                1,
+            );
+        }
+        if let Err(e) = self.fs.symlink(target, &link_path) {
+            return (format!("ln: {}: {}", positional[1], e), 1);
+        }
+        (String::new(), 0)
+    }
+
+    pub fn cmd_readlink(&self, args: &[String]) -> (String, i32) {
+        if args.is_empty() {
+            return ("readlink: missing operand".into(), 1);
+        }
+        let path = self.resolve(&args[0]);
+        match self.fs.read_link(&path) {
+            Ok(target) => (target, 0),
+            Err(_) => (format!("readlink: {}: Invalid argument", args[0]), 1),
+        }
     }
 }
 

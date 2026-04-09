@@ -15,6 +15,10 @@ pub enum VfsError {
     AlreadyExists,
     /// File content is not valid UTF-8 (returned by [`crate::MemFs::read_to_string`]).
     InvalidUtf8,
+    /// Too many levels of symbolic links encountered during traversal.
+    TooManySymlinks,
+    /// The path is not a symbolic link (returned by [`crate::MemFs::read_link`]).
+    NotASymlink,
 }
 
 impl fmt::Display for VfsError {
@@ -26,6 +30,8 @@ impl fmt::Display for VfsError {
             VfsError::PermissionDenied => f.write_str("Permission denied"),
             VfsError::AlreadyExists => f.write_str("File exists"),
             VfsError::InvalidUtf8 => f.write_str("Invalid UTF-8"),
+            VfsError::TooManySymlinks => f.write_str("Too many levels of symbolic links"),
+            VfsError::NotASymlink => f.write_str("Not a symbolic link"),
         }
     }
 }

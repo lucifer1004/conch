@@ -1,4 +1,3 @@
-use crate::ansi;
 use crate::shell::Shell;
 
 impl Shell {
@@ -21,60 +20,6 @@ impl Shell {
         }
     }
 
-    pub fn cmd_tree(&self, args: &[String]) -> (String, i32) {
-        let display_arg = args.first().map(|s| s.as_str()).unwrap_or(".");
-        let root_path = if args.is_empty() {
-            self.cwd.clone()
-        } else {
-            self.resolve(&args[0])
-        };
-
-        if !self.fs.get(&root_path).map_or(false, |e| e.is_dir()) {
-            return (format!("tree: '{}': No such directory", display_arg), 1);
-        }
-
-        let root_display = if root_path == self.cwd {
-            ".".into()
-        } else {
-            root_path
-                .rsplit('/')
-                .next()
-                .unwrap_or(&root_path)
-                .to_string()
-        };
-
-        let mut lines = vec![root_display];
-        self.tree_recurse(&root_path, "", &mut lines);
-        (lines.join("\n"), 0)
-    }
-
-    fn tree_recurse(&self, dir: &str, prefix: &str, lines: &mut Vec<String>) {
-        let children = self.list_dir(dir);
-        for (i, (name, is_dir, _mode)) in children.iter().enumerate() {
-            let is_last = i == children.len() - 1;
-            let connector = if is_last {
-                "\u{2514}\u{2500}\u{2500} "
-            } else {
-                "\u{251c}\u{2500}\u{2500} "
-            };
-            let display = if *is_dir {
-                format!("{}{}/{}", ansi::BOLD_BLUE, name, ansi::RESET)
-            } else {
-                name.clone()
-            };
-            lines.push(format!("{}{}{}", prefix, connector, display));
-
-            if *is_dir {
-                let child_prefix = if is_last {
-                    format!("{}    ", prefix)
-                } else {
-                    format!("{}\u{2502}   ", prefix)
-                };
-                self.tree_recurse(&format!("{}/{}", dir, name), &child_prefix, lines);
-            }
-        }
-    }
-
     pub fn cmd_env(&self) -> (String, i32) {
         let mut lines: Vec<String> = self
             .env
@@ -94,40 +39,6 @@ impl Shell {
             }
         }
         (String::new(), 0)
-    }
-
-    pub fn cmd_bash(&mut self, args: &[String]) -> (String, i32) {
-        if args.is_empty() {
-            return ("bash: missing script file".into(), 1);
-        }
-        let path = self.resolve(&args[0]);
-        let script = match self.fs.read_to_string(&path) {
-            Ok(s) => s.to_string(),
-            Err(e) => return (format!("bash: {}: {}", args[0], e), 1),
-        };
-        self.run_script(&script)
-    }
-
-    /// Execute a file as a script (for `./script.sh` invocation).
-    /// Requires the file to have execute permission.
-    pub fn cmd_exec(&mut self, cmd: &str, _args: &[String]) -> (String, i32) {
-        let path = self.resolve(cmd);
-        let meta = match self.fs.metadata(&path) {
-            Ok(m) if m.is_dir() => return (format!("conch: {}: Is a directory", cmd), 126),
-            Ok(m) => m,
-            Err(_) => return (format!("conch: {}: No such file or directory", cmd), 127),
-        };
-        if !meta.is_readable() {
-            return (format!("conch: {}: Permission denied", cmd), 126);
-        }
-        if !meta.is_executable() {
-            return (format!("conch: {}: Permission denied", cmd), 126);
-        }
-        let script = match self.fs.read_to_string(&path) {
-            Ok(s) => s.to_string(),
-            Err(e) => return (format!("conch: {}: {}", cmd, e), 126),
-        };
-        self.run_script(&script)
     }
 
     pub fn cmd_date(&self) -> (String, i32) {
@@ -167,5 +78,48 @@ impl Shell {
             }
         }
         (out.join("\n"), 0)
+    }
+
+    pub fn cmd_basename(&self, args: &[String]) -> (String, i32) {
+        if args.is_empty() {
+            return ("basename: missing operand".into(), 1);
+        }
+        let name = args[0].rsplit('/').next().unwrap_or(&args[0]);
+        if args.len() > 1 {
+            if let Some(stripped) = name.strip_suffix(args[1].as_str()) {
+                return (stripped.to_string(), 0);
+            }
+        }
+        (name.to_string(), 0)
+    }
+
+    pub fn cmd_dirname(&self, args: &[String]) -> (String, i32) {
+        if args.is_empty() {
+            return ("dirname: missing operand".into(), 1);
+        }
+        let dir = if let Some((d, _)) = args[0].rsplit_once('/') {
+            if d.is_empty() {
+                "/"
+            } else {
+                d
+            }
+        } else {
+            "."
+        };
+        (dir.to_string(), 0)
+    }
+
+    pub fn cmd_realpath(&self, args: &[String]) -> (String, i32) {
+        if args.is_empty() {
+            return ("realpath: missing operand".into(), 1);
+        }
+        let path = self.resolve(&args[0]);
+        if !self.fs.exists(&path) {
+            return (
+                format!("realpath: {}: No such file or directory", args[0]),
+                1,
+            );
+        }
+        (path, 0)
     }
 }

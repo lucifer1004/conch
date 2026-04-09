@@ -12,6 +12,9 @@ use crate::metadata::Metadata;
 // Internal trie node
 // ---------------------------------------------------------------------------
 
+/// Maximum symlink resolution depth to prevent infinite loops.
+const MAX_SYMLINK_DEPTH: usize = 40;
+
 #[derive(Debug, Clone)]
 pub(crate) enum TreeNode {
     File {
@@ -21,6 +24,9 @@ pub(crate) enum TreeNode {
     Dir {
         mode: u16,
         children: BTreeMap<String, TreeNode>,
+    },
+    Symlink {
+        target: String,
     },
 }
 
@@ -33,15 +39,21 @@ impl TreeNode {
         matches!(self, TreeNode::File { .. })
     }
 
+    fn is_symlink(&self) -> bool {
+        matches!(self, TreeNode::Symlink { .. })
+    }
+
     fn mode(&self) -> u16 {
         match self {
             TreeNode::File { mode, .. } | TreeNode::Dir { mode, .. } => *mode,
+            TreeNode::Symlink { .. } => 0o777,
         }
     }
 
-    fn mode_mut(&mut self) -> &mut u16 {
+    fn mode_mut(&mut self) -> Option<&mut u16> {
         match self {
-            TreeNode::File { mode, .. } | TreeNode::Dir { mode, .. } => mode,
+            TreeNode::File { mode, .. } | TreeNode::Dir { mode, .. } => Some(mode),
+            TreeNode::Symlink { .. } => None,
         }
     }
 
@@ -52,18 +64,16 @@ impl TreeNode {
                 mode: *mode,
             },
             TreeNode::Dir { mode, .. } => EntryRef::Dir { mode: *mode },
+            TreeNode::Symlink { target } => EntryRef::Symlink { target },
         }
     }
 
     fn to_metadata(&self) -> Metadata {
-        Metadata::new(
-            self.is_file(),
-            match self {
-                TreeNode::File { content, .. } => content.len(),
-                TreeNode::Dir { .. } => 0,
-            },
-            self.mode(),
-        )
+        match self {
+            TreeNode::File { content, mode } => Metadata::new(true, content.len(), *mode),
+            TreeNode::Dir { mode, .. } => Metadata::new(false, 0, *mode),
+            TreeNode::Symlink { .. } => Metadata::new_symlink(0o777),
+        }
     }
 
     /// Collect all paths via DFS.
@@ -119,48 +129,221 @@ impl MemFs {
 
     // -- Internal traversal -------------------------------------------------
 
+    /// Resolve a symlink target to an absolute path given the directory
+    /// containing the symlink.
+    fn resolve_symlink_target(target: &str, symlink_dir: &str) -> String {
+        if target.starts_with('/') {
+            // Absolute target — use as-is (normalize it)
+            crate::normalize(target)
+        } else {
+            // Relative target — resolve relative to the symlink's parent dir
+            let base = alloc::format!("{}/{}", symlink_dir, target);
+            crate::normalize(&base)
+        }
+    }
+
+    /// Traverse to `path`, following symlinks transparently (including in
+    /// intermediate components). Returns `None` if the path does not exist
+    /// or a symlink loop / depth limit is exceeded.
     fn traverse(&self, path: &str) -> Option<&TreeNode> {
+        self.traverse_with_depth(path, 0)
+    }
+
+    fn traverse_with_depth(&self, path: &str, depth: usize) -> Option<&TreeNode> {
+        if depth > MAX_SYMLINK_DEPTH {
+            return None;
+        }
         if path.is_empty() {
             return None;
         }
         if path == "/" {
             return Some(&self.root);
         }
+
+        let components = split_path(path);
         let mut node = &self.root;
-        for component in split_path(path) {
+        // Track current directory as we descend, for resolving relative symlinks
+        let mut current_dir = String::from("/");
+
+        for (i, component) in components.iter().enumerate() {
             match node {
                 TreeNode::Dir { children, .. } => {
-                    node = children.get(component)?;
+                    node = children.get(*component)?;
+                    // Update current_dir
+                    if current_dir == "/" {
+                        current_dir = alloc::format!("/{}", component);
+                    } else {
+                        current_dir = alloc::format!("{}/{}", current_dir, component);
+                    }
+                    // If the resolved node is a symlink and it's not the final component,
+                    // we must follow it to continue traversal.
+                    if let TreeNode::Symlink { target } = node {
+                        let symlink_dir = crate::parent(&current_dir).unwrap_or("/");
+                        let resolved = Self::resolve_symlink_target(target, symlink_dir);
+                        // Append the remaining path components to the resolved target
+                        let remaining = &components[i + 1..];
+                        let full_path = if remaining.is_empty() {
+                            resolved
+                        } else {
+                            let suffix = remaining.join("/");
+                            alloc::format!("{}/{}", resolved, suffix)
+                        };
+                        return self.traverse_with_depth(&full_path, depth + 1);
+                    }
                 }
-                TreeNode::File { .. } => return None,
+                TreeNode::File { .. } | TreeNode::Symlink { .. } => return None,
+            }
+        }
+        // Final node: if it's a symlink, follow it
+        if let TreeNode::Symlink { target } = node {
+            let symlink_dir = crate::parent(&current_dir).unwrap_or("/");
+            let resolved = Self::resolve_symlink_target(target, symlink_dir);
+            return self.traverse_with_depth(&resolved, depth + 1);
+        }
+        Some(node)
+    }
+
+    /// Traverse to `path` WITHOUT following the final symlink component.
+    /// Intermediate symlinks in directory components are still followed.
+    fn traverse_nofollow(&self, path: &str) -> Option<&TreeNode> {
+        self.traverse_nofollow_with_depth(path, 0)
+    }
+
+    fn traverse_nofollow_with_depth(&self, path: &str, depth: usize) -> Option<&TreeNode> {
+        if depth > MAX_SYMLINK_DEPTH {
+            return None;
+        }
+        if path.is_empty() {
+            return None;
+        }
+        if path == "/" {
+            return Some(&self.root);
+        }
+
+        let components = split_path(path);
+        let mut node = &self.root;
+        let mut current_dir = String::from("/");
+
+        for (i, component) in components.iter().enumerate() {
+            let is_last = i == components.len() - 1;
+            match node {
+                TreeNode::Dir { children, .. } => {
+                    node = children.get(*component)?;
+                    if current_dir == "/" {
+                        current_dir = alloc::format!("/{}", component);
+                    } else {
+                        current_dir = alloc::format!("{}/{}", current_dir, component);
+                    }
+                    // Only follow symlinks for intermediate components
+                    if !is_last {
+                        if let TreeNode::Symlink { target } = node {
+                            let symlink_dir = crate::parent(&current_dir).unwrap_or("/");
+                            let resolved = Self::resolve_symlink_target(target, symlink_dir);
+                            let remaining = &components[i + 1..];
+                            let full_path = if remaining.is_empty() {
+                                resolved
+                            } else {
+                                let suffix = remaining.join("/");
+                                alloc::format!("{}/{}", resolved, suffix)
+                            };
+                            return self.traverse_nofollow_with_depth(&full_path, depth + 1);
+                        }
+                    }
+                }
+                TreeNode::File { .. } | TreeNode::Symlink { .. } => return None,
             }
         }
         Some(node)
     }
 
     fn traverse_mut(&mut self, path: &str) -> Option<&mut TreeNode> {
+        self.traverse_mut_with_depth(path, 0)
+    }
+
+    fn traverse_mut_with_depth(&mut self, path: &str, depth: usize) -> Option<&mut TreeNode> {
+        if depth > MAX_SYMLINK_DEPTH {
+            return None;
+        }
         if path.is_empty() {
             return None;
         }
         if path == "/" {
             return Some(&mut self.root);
         }
-        let mut node = &mut self.root;
-        for component in split_path(path) {
+
+        // We need to detect if any intermediate node is a symlink.
+        // To do that without borrowing issues, first check via the shared traverse.
+        // If the path passes through a symlink, resolve the final target path and
+        // redo the mutable traversal on that resolved path.
+        let resolved_path = self.resolve_path_following_symlinks(path, depth)?;
+        if resolved_path == path {
+            // No symlinks involved — do the simple mutable traversal
+            let mut node = &mut self.root;
+            for component in split_path(&resolved_path) {
+                match node {
+                    TreeNode::Dir { children, .. } => {
+                        node = children.get_mut(component)?;
+                    }
+                    TreeNode::File { .. } | TreeNode::Symlink { .. } => return None,
+                }
+            }
+            Some(node)
+        } else {
+            // Recurse with the resolved path
+            self.traverse_mut_with_depth(&resolved_path, depth + 1)
+        }
+    }
+
+    /// Resolve all symlinks in `path` and return the final canonical path,
+    /// without returning a reference into the tree (avoids borrow issues).
+    fn resolve_path_following_symlinks(&self, path: &str, depth: usize) -> Option<String> {
+        if depth > MAX_SYMLINK_DEPTH {
+            return None;
+        }
+        if path.is_empty() {
+            return None;
+        }
+        if path == "/" {
+            return Some("/".into());
+        }
+
+        let components = split_path(path);
+        let mut node = &self.root;
+        let mut current_dir = String::from("/");
+
+        for (i, component) in components.iter().enumerate() {
             match node {
                 TreeNode::Dir { children, .. } => {
-                    node = children.get_mut(component)?;
+                    node = children.get(*component)?;
+                    if current_dir == "/" {
+                        current_dir = alloc::format!("/{}", component);
+                    } else {
+                        current_dir = alloc::format!("{}/{}", current_dir, component);
+                    }
+                    if let TreeNode::Symlink { target } = node {
+                        let symlink_dir = crate::parent(&current_dir).unwrap_or("/");
+                        let resolved = Self::resolve_symlink_target(target, symlink_dir);
+                        let remaining = &components[i + 1..];
+                        let full_path = if remaining.is_empty() {
+                            resolved
+                        } else {
+                            let suffix = remaining.join("/");
+                            alloc::format!("{}/{}", resolved, suffix)
+                        };
+                        return self.resolve_path_following_symlinks(&full_path, depth + 1);
+                    }
                 }
-                TreeNode::File { .. } => return None,
+                TreeNode::File { .. } | TreeNode::Symlink { .. } => return None,
             }
         }
-        Some(node)
+        Some(current_dir)
     }
 
     /// Get mutable access to the parent directory's children map and the leaf name.
     ///
-    /// Uses a raw-pointer trick to work around Rust's inability to return
-    /// a mutable reference produced by chained reborrows.
+    /// Follows symlinks in intermediate components. Uses a raw-pointer trick to
+    /// work around Rust's inability to return a mutable reference produced by
+    /// chained reborrows.
     fn traverse_parent_mut<'a>(
         &'a mut self,
         path: &'a str,
@@ -172,6 +355,50 @@ impl MemFs {
         let (parents, leaf) = components.split_at(components.len() - 1);
         let leaf_name = leaf[0];
 
+        // If there are intermediate symlinks, resolve the parent path first.
+        let parent_path: String;
+        let effective_leaf: &str;
+        if !parents.is_empty() {
+            // Build the parent path from components
+            let raw_parent = alloc::format!("/{}", parents.join("/"));
+            // Use shared traversal to check for and resolve symlinks
+            let resolved = self.resolve_path_following_symlinks(&raw_parent, 0);
+            match resolved {
+                Some(r) if r != raw_parent => {
+                    // Parent resolved to a different path — need to redo with resolved path
+                    parent_path = r;
+                    effective_leaf = leaf_name;
+                    // Recurse via a helper: build full resolved path and call again
+                    let full = alloc::format!("{}/{}", parent_path, effective_leaf);
+                    // We need to call traverse_parent_mut with the resolved full path,
+                    // but we can't recurse with a local String's lifetime as &'a str.
+                    // Instead, do a direct raw-pointer traversal on the resolved parent.
+                    let rp_components = split_path(&parent_path);
+                    let mut node: *mut TreeNode = &mut self.root;
+                    for component in &rp_components {
+                        unsafe {
+                            match &mut *node {
+                                TreeNode::Dir { children, .. } => {
+                                    node = children.get_mut(*component)? as *mut TreeNode;
+                                }
+                                TreeNode::File { .. } | TreeNode::Symlink { .. } => return None,
+                            }
+                        }
+                    }
+                    // node now points to the resolved parent dir; leak effective_leaf
+                    // via the original path slice — the leaf name is the same
+                    let _ = full; // suppress unused warning
+                    unsafe {
+                        match &mut *node {
+                            TreeNode::Dir { children, .. } => return Some((children, leaf_name)),
+                            TreeNode::File { .. } | TreeNode::Symlink { .. } => return None,
+                        }
+                    }
+                }
+                _ => {} // no symlinks in parent, fall through to normal traversal
+            }
+        }
+
         let mut node: *mut TreeNode = &mut self.root;
         for component in parents {
             // SAFETY: we hold &mut self, so exclusive access is guaranteed.
@@ -182,41 +409,108 @@ impl MemFs {
                     TreeNode::Dir { children, .. } => {
                         node = children.get_mut(*component)? as *mut TreeNode;
                     }
-                    TreeNode::File { .. } => return None,
+                    TreeNode::File { .. } | TreeNode::Symlink { .. } => return None,
                 }
             }
         }
         unsafe {
             match &mut *node {
                 TreeNode::Dir { children, .. } => Some((children, leaf_name)),
-                TreeNode::File { .. } => None,
+                TreeNode::File { .. } | TreeNode::Symlink { .. } => None,
+            }
+        }
+    }
+
+    /// Like `traverse_parent_mut` but does NOT follow the final symlink component.
+    /// Intermediate directory symlinks are still followed.
+    /// Used by `remove` so it removes the symlink itself rather than its target.
+    fn traverse_parent_mut_nofollow<'a>(
+        &'a mut self,
+        path: &'a str,
+    ) -> Option<(&'a mut BTreeMap<String, TreeNode>, &'a str)> {
+        let components = split_path(path);
+        if components.is_empty() {
+            return None;
+        }
+        let (parents, leaf) = components.split_at(components.len() - 1);
+        let leaf_name = leaf[0];
+
+        if !parents.is_empty() {
+            let raw_parent = alloc::format!("/{}", parents.join("/"));
+            let resolved = self.resolve_path_following_symlinks(&raw_parent, 0);
+            match resolved {
+                Some(r) if r != raw_parent => {
+                    let rp_components = split_path(&r);
+                    let mut node: *mut TreeNode = &mut self.root;
+                    for component in &rp_components {
+                        unsafe {
+                            match &mut *node {
+                                TreeNode::Dir { children, .. } => {
+                                    node = children.get_mut(*component)? as *mut TreeNode;
+                                }
+                                TreeNode::File { .. } | TreeNode::Symlink { .. } => return None,
+                            }
+                        }
+                    }
+                    unsafe {
+                        match &mut *node {
+                            TreeNode::Dir { children, .. } => return Some((children, leaf_name)),
+                            TreeNode::File { .. } | TreeNode::Symlink { .. } => return None,
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut node: *mut TreeNode = &mut self.root;
+        for component in parents {
+            unsafe {
+                match &mut *node {
+                    TreeNode::Dir { children, .. } => {
+                        node = children.get_mut(*component)? as *mut TreeNode;
+                    }
+                    TreeNode::File { .. } | TreeNode::Symlink { .. } => return None,
+                }
+            }
+        }
+        unsafe {
+            match &mut *node {
+                TreeNode::Dir { children, .. } => Some((children, leaf_name)),
+                TreeNode::File { .. } | TreeNode::Symlink { .. } => None,
             }
         }
     }
 
     // -- Queries ------------------------------------------------------------
 
-    /// Get a borrowed view of the entry at `path`, if it exists.
+    /// Get a borrowed view of the entry at `path`, following symlinks.
     pub fn get(&self, path: &str) -> Option<EntryRef<'_>> {
         self.traverse(path).map(|n| n.as_entry_ref())
     }
 
-    /// Returns `true` if an entry exists at `path`.
+    /// Returns `true` if an entry exists at `path` (following symlinks).
     pub fn exists(&self, path: &str) -> bool {
         self.traverse(path).is_some()
     }
 
-    /// Returns `true` if `path` is a file.
+    /// Returns `true` if `path` is a file (following symlinks).
     pub fn is_file(&self, path: &str) -> bool {
         self.traverse(path).is_some_and(|n| n.is_file())
     }
 
-    /// Returns `true` if `path` is a directory.
+    /// Returns `true` if `path` is a directory (following symlinks).
     pub fn is_dir(&self, path: &str) -> bool {
         self.traverse(path).is_some_and(|n| n.is_dir())
     }
 
+    /// Returns `true` if `path` is a symbolic link (does NOT follow the final symlink).
+    pub fn is_symlink(&self, path: &str) -> bool {
+        self.traverse_nofollow(path).is_some_and(|n| n.is_symlink())
+    }
+
     /// Read the raw byte content of a file, checking read permission.
+    /// Follows symlinks transparently.
     pub fn read(&self, path: &str) -> Result<&[u8], VfsError> {
         match self.traverse(path) {
             Some(TreeNode::File { content, mode }) => {
@@ -227,6 +521,7 @@ impl MemFs {
                 }
             }
             Some(TreeNode::Dir { .. }) => Err(VfsError::IsADirectory),
+            Some(TreeNode::Symlink { .. }) => Err(VfsError::NotFound), // dangling symlink
             None => Err(VfsError::NotFound),
         }
     }
@@ -239,7 +534,7 @@ impl MemFs {
         core::str::from_utf8(bytes).map_err(|_| VfsError::InvalidUtf8)
     }
 
-    /// Get metadata for an entry.
+    /// Get metadata for an entry, following symlinks.
     pub fn metadata(&self, path: &str) -> Result<Metadata, VfsError> {
         match self.traverse(path) {
             Some(node) => Ok(node.to_metadata()),
@@ -247,9 +542,32 @@ impl MemFs {
         }
     }
 
+    /// Get metadata for an entry WITHOUT following the final symlink.
+    ///
+    /// If `path` is a symlink, returns metadata for the symlink itself.
+    pub fn symlink_metadata(&self, path: &str) -> Result<Metadata, VfsError> {
+        match self.traverse_nofollow(path) {
+            Some(node) => Ok(node.to_metadata()),
+            None => Err(VfsError::NotFound),
+        }
+    }
+
+    /// Read the target of a symbolic link at `path` without following it.
+    ///
+    /// Returns [`VfsError::NotASymlink`] if `path` is not a symlink.
+    /// Returns [`VfsError::NotFound`] if `path` does not exist.
+    pub fn read_link(&self, path: &str) -> Result<String, VfsError> {
+        match self.traverse_nofollow(path) {
+            Some(TreeNode::Symlink { target }) => Ok(target.clone()),
+            Some(_) => Err(VfsError::NotASymlink),
+            None => Err(VfsError::NotFound),
+        }
+    }
+
     // -- Directory listing --------------------------------------------------
 
     /// List the direct children of a directory, sorted by name.
+    /// Follows symlinks to resolve the directory.
     pub fn read_dir(&self, dir: &str) -> Result<Vec<DirEntry>, VfsError> {
         match self.traverse(dir) {
             Some(TreeNode::Dir { children, .. }) => {
@@ -263,7 +581,9 @@ impl MemFs {
                     })
                     .collect())
             }
-            Some(TreeNode::File { .. }) => Err(VfsError::NotADirectory),
+            Some(TreeNode::File { .. }) | Some(TreeNode::Symlink { .. }) => {
+                Err(VfsError::NotADirectory)
+            }
             None => Err(VfsError::NotFound),
         }
     }
@@ -301,6 +621,7 @@ impl MemFs {
                 mode,
                 children: BTreeMap::new(),
             },
+            Entry::Symlink { target } => TreeNode::Symlink { target },
         };
         if path == "/" {
             self.root = node;
@@ -314,16 +635,42 @@ impl MemFs {
     /// Remove the entry at `path` and return it as an [`Entry`], if it existed.
     ///
     /// For directories, this removes the entire subtree.
+    /// For symlinks, removes the symlink itself (not the target).
     pub fn remove(&mut self, path: &str) -> Option<Entry> {
         if path == "/" {
             return None;
         }
-        let (children, name) = self.traverse_parent_mut(path)?;
+        // Use nofollow semantics so we remove the symlink, not its target
+        let path_str = path.to_string();
+        let (children, name) = self.traverse_parent_mut(&path_str)?;
         let node = children.remove(name)?;
         Some(match node {
             TreeNode::File { content, mode } => Entry::File { content, mode },
             TreeNode::Dir { mode, .. } => Entry::Dir { mode },
+            TreeNode::Symlink { target } => Entry::Symlink { target },
         })
+    }
+
+    /// Create a symbolic link at `link_path` pointing to `target`.
+    ///
+    /// Parent directory of `link_path` must exist. Does not check whether
+    /// `target` exists (dangling symlinks are allowed).
+    pub fn symlink(&mut self, target: &str, link_path: &str) -> Result<(), VfsError> {
+        let parent = crate::parent(link_path).unwrap_or("/");
+        if !self.is_dir(parent) {
+            return Err(VfsError::NotFound);
+        }
+        let link_path_owned = link_path.to_string();
+        let (children, name) = self
+            .traverse_parent_mut(&link_path_owned)
+            .ok_or(VfsError::NotFound)?;
+        children.insert(
+            name.to_string(),
+            TreeNode::Symlink {
+                target: target.to_string(),
+            },
+        );
+        Ok(())
     }
 
     /// Write a file with default permissions (`0o644`). Overwrites if it exists.
@@ -349,6 +696,7 @@ impl MemFs {
     }
 
     /// Append data to an existing file. Checks write permission.
+    /// Follows symlinks transparently.
     pub fn append(&mut self, path: &str, data: &[u8]) -> Result<(), VfsError> {
         match self.traverse_mut(path) {
             Some(TreeNode::File { content, mode }) => {
@@ -359,6 +707,7 @@ impl MemFs {
                 Ok(())
             }
             Some(TreeNode::Dir { .. }) => Err(VfsError::IsADirectory),
+            Some(TreeNode::Symlink { .. }) => Err(VfsError::NotFound), // dangling
             None => Err(VfsError::NotFound),
         }
     }
@@ -391,7 +740,7 @@ impl MemFs {
             // Ensure current node is a directory, then get/create child
             let children = match node {
                 TreeNode::Dir { children, .. } => children,
-                TreeNode::File { .. } => return, // can't descend into a file
+                TreeNode::File { .. } | TreeNode::Symlink { .. } => return, // can't descend
             };
             node = children
                 .entry(component.to_string())
@@ -439,10 +788,13 @@ impl MemFs {
     }
 
     /// Set the permission mode on an existing entry.
+    /// Follows symlinks (sets mode on the target, not the symlink).
     pub fn set_mode(&mut self, path: &str, mode: u16) -> Result<(), VfsError> {
         match self.traverse_mut(path) {
             Some(node) => {
-                *node.mode_mut() = mode;
+                if let Some(m) = node.mode_mut() {
+                    *m = mode;
+                }
                 Ok(())
             }
             None => Err(VfsError::NotFound),
@@ -450,6 +802,7 @@ impl MemFs {
     }
 
     /// Copy a file. Checks read permission on the source.
+    /// Follows symlinks on the source.
     pub fn copy(&mut self, src: &str, dst: &str) -> Result<(), VfsError> {
         let (content, _mode) = match self.traverse(src) {
             Some(TreeNode::File { content, mode }) => {
@@ -459,6 +812,7 @@ impl MemFs {
                 (content.clone(), *mode)
             }
             Some(TreeNode::Dir { .. }) => return Err(VfsError::IsADirectory),
+            Some(TreeNode::Symlink { .. }) => return Err(VfsError::NotFound), // dangling
             None => return Err(VfsError::NotFound),
         };
         let node = TreeNode::File {
@@ -1320,5 +1674,186 @@ mod tests {
         assert_eq!(fs.read_to_string("/a/b/new/f.txt"), Ok("fresh"));
         // Old deep path is still gone
         assert!(!fs.exists("/a/b/c"));
+    }
+
+    // -- symlink tests -------------------------------------------------------
+
+    #[test]
+    fn symlink_create_and_read_through() {
+        let mut fs = MemFs::new();
+        fs.write("/real.txt", "hello");
+        fs.symlink("/real.txt", "/link.txt").unwrap();
+        // is_symlink detects the link without following
+        assert!(fs.is_symlink("/link.txt"));
+        // reading through the link should yield the file content
+        assert_eq!(fs.read_to_string("/link.txt"), Ok("hello"));
+        // is_file follows symlinks
+        assert!(fs.is_file("/link.txt"));
+        assert!(!fs.is_dir("/link.txt"));
+    }
+
+    #[test]
+    fn symlink_to_directory() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/real/sub");
+        fs.write("/real/sub/f.txt", "data");
+        fs.symlink("/real", "/link").unwrap();
+        // Traversal through link should reach the directory
+        assert!(fs.is_dir("/link"));
+        assert!(fs.is_file("/link/sub/f.txt"));
+        assert_eq!(fs.read_to_string("/link/sub/f.txt"), Ok("data"));
+        // read_dir through symlinked directory
+        let entries = fs.read_dir("/link").unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "sub");
+    }
+
+    #[test]
+    fn symlink_dangling_returns_not_found() {
+        let mut fs = MemFs::new();
+        fs.symlink("/nonexistent.txt", "/dangling").unwrap();
+        assert!(fs.is_symlink("/dangling"));
+        // Following a dangling symlink should return NotFound
+        assert_eq!(fs.read("/dangling"), Err(VfsError::NotFound));
+        assert_eq!(fs.read_to_string("/dangling"), Err(VfsError::NotFound));
+        // exists() follows symlinks, so dangling link returns false
+        assert!(!fs.exists("/dangling"));
+    }
+
+    #[test]
+    fn symlink_chain() {
+        // a -> b -> c -> real file
+        let mut fs = MemFs::new();
+        fs.write("/real.txt", "chained");
+        fs.symlink("/real.txt", "/c").unwrap();
+        fs.symlink("/c", "/b").unwrap();
+        fs.symlink("/b", "/a").unwrap();
+        assert_eq!(fs.read_to_string("/a"), Ok("chained"));
+        assert_eq!(fs.read_to_string("/b"), Ok("chained"));
+        assert_eq!(fs.read_to_string("/c"), Ok("chained"));
+    }
+
+    #[test]
+    fn symlink_loop_returns_not_found() {
+        let mut fs = MemFs::new();
+        // a -> b -> a  (loop)
+        fs.symlink("/b", "/a").unwrap();
+        fs.symlink("/a", "/b").unwrap();
+        // Reading through a loop should fail (not panic), returning NotFound
+        assert_eq!(fs.read("/a"), Err(VfsError::NotFound));
+        assert_eq!(fs.read("/b"), Err(VfsError::NotFound));
+        assert!(!fs.exists("/a"));
+    }
+
+    #[test]
+    fn read_link_returns_target_without_following() {
+        let mut fs = MemFs::new();
+        fs.write("/real.txt", "data");
+        fs.symlink("/real.txt", "/link").unwrap();
+        assert_eq!(fs.read_link("/link"), Ok("/real.txt".to_string()));
+        // read_link on a non-symlink returns NotASymlink
+        assert_eq!(fs.read_link("/real.txt"), Err(VfsError::NotASymlink));
+        // read_link on missing path returns NotFound
+        assert_eq!(fs.read_link("/missing"), Err(VfsError::NotFound));
+    }
+
+    #[test]
+    fn remove_symlink_does_not_remove_target() {
+        let mut fs = MemFs::new();
+        fs.write("/real.txt", "keep me");
+        fs.symlink("/real.txt", "/link").unwrap();
+        // Remove the symlink
+        let removed = fs.remove("/link");
+        assert!(removed.is_some());
+        // The target should still exist
+        assert_eq!(fs.read_to_string("/real.txt"), Ok("keep me"));
+        // The symlink should be gone
+        assert!(!fs.is_symlink("/link"));
+        assert!(!fs.exists("/link"));
+    }
+
+    #[test]
+    fn symlink_relative_resolution() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/a/b");
+        fs.write("/a/b/real.txt", "relative");
+        // Create a relative symlink in /a/b pointing to real.txt (same dir)
+        fs.symlink("real.txt", "/a/b/link").unwrap();
+        assert_eq!(fs.read_to_string("/a/b/link"), Ok("relative"));
+        // Also test a relative symlink going up one level
+        fs.write("/a/top.txt", "top");
+        fs.symlink("../top.txt", "/a/b/up_link").unwrap();
+        assert_eq!(fs.read_to_string("/a/b/up_link"), Ok("top"));
+    }
+
+    #[test]
+    fn symlink_in_intermediate_path_component() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/real_dir");
+        fs.write("/real_dir/file.txt", "found");
+        // /link -> /real_dir; access /link/file.txt
+        fs.symlink("/real_dir", "/link").unwrap();
+        assert_eq!(fs.read_to_string("/link/file.txt"), Ok("found"));
+        // write through symlinked directory
+        fs.write("/link/new.txt", "new");
+        assert_eq!(fs.read_to_string("/real_dir/new.txt"), Ok("new"));
+    }
+
+    #[test]
+    fn symlink_metadata_is_symlink() {
+        let mut fs = MemFs::new();
+        fs.write("/real.txt", "x");
+        fs.symlink("/real.txt", "/link").unwrap();
+        // symlink_metadata does NOT follow the final symlink
+        let m = fs.symlink_metadata("/link").unwrap();
+        assert!(m.is_symlink());
+        assert!(!m.is_file());
+        assert!(!m.is_dir());
+        // regular metadata DOES follow it
+        let m2 = fs.metadata("/link").unwrap();
+        assert!(m2.is_file());
+        assert!(!m2.is_symlink());
+    }
+
+    #[test]
+    fn symlink_entry_is_symlink() {
+        let mut fs = MemFs::new();
+        fs.write("/real.txt", "x");
+        fs.symlink("/real.txt", "/link").unwrap();
+        // get() follows symlinks, so returns File
+        let e = fs.get("/link").unwrap();
+        assert!(e.is_file());
+        assert!(!e.is_symlink());
+        // insert/remove round-trip
+        let removed = fs.remove("/link").unwrap();
+        assert!(removed.is_symlink());
+    }
+
+    #[test]
+    fn symlink_insert_via_entry() {
+        let mut fs = MemFs::new();
+        fs.write("/real.txt", "data");
+        fs.insert("/link".to_string(), Entry::symlink("/real.txt"));
+        assert!(fs.is_symlink("/link"));
+        assert_eq!(fs.read_to_string("/link"), Ok("data"));
+    }
+
+    #[test]
+    fn symlink_parent_missing_returns_error() {
+        let mut fs = MemFs::new();
+        assert_eq!(
+            fs.symlink("/target", "/no_parent/link"),
+            Err(VfsError::NotFound)
+        );
+    }
+
+    #[test]
+    fn is_symlink_on_non_symlink() {
+        let mut fs = MemFs::new();
+        fs.write("/f.txt", "x");
+        fs.create_dir_all("/d");
+        assert!(!fs.is_symlink("/f.txt"));
+        assert!(!fs.is_symlink("/d"));
+        assert!(!fs.is_symlink("/missing"));
     }
 }
