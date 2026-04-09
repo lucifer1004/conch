@@ -20,13 +20,19 @@ pub(crate) enum TreeNode {
     File {
         content: Vec<u8>,
         mode: u16,
+        uid: u32,
+        gid: u32,
     },
     Dir {
         mode: u16,
         children: BTreeMap<String, TreeNode>,
+        uid: u32,
+        gid: u32,
     },
     Symlink {
         target: String,
+        uid: u32,
+        gid: u32,
     },
 }
 
@@ -57,22 +63,51 @@ impl TreeNode {
         }
     }
 
+    /// Returns (uid, gid, mode) for permission checking.
+    fn ownership_and_mode(&self) -> (u32, u32, u16) {
+        match self {
+            TreeNode::File { uid, gid, mode, .. } => (*uid, *gid, *mode),
+            TreeNode::Dir { uid, gid, mode, .. } => (*uid, *gid, *mode),
+            TreeNode::Symlink { uid, gid, .. } => (*uid, *gid, 0o777),
+        }
+    }
+
     fn as_entry_ref(&self) -> EntryRef<'_> {
         match self {
-            TreeNode::File { content, mode } => EntryRef::File {
+            TreeNode::File {
+                content,
+                mode,
+                uid,
+                gid,
+            } => EntryRef::File {
                 content,
                 mode: *mode,
+                uid: *uid,
+                gid: *gid,
             },
-            TreeNode::Dir { mode, .. } => EntryRef::Dir { mode: *mode },
-            TreeNode::Symlink { target } => EntryRef::Symlink { target },
+            TreeNode::Dir { mode, uid, gid, .. } => EntryRef::Dir {
+                mode: *mode,
+                uid: *uid,
+                gid: *gid,
+            },
+            TreeNode::Symlink { target, uid, gid } => EntryRef::Symlink {
+                target,
+                uid: *uid,
+                gid: *gid,
+            },
         }
     }
 
     fn to_metadata(&self) -> Metadata {
         match self {
-            TreeNode::File { content, mode } => Metadata::new(true, content.len(), *mode),
-            TreeNode::Dir { mode, .. } => Metadata::new(false, 0, *mode),
-            TreeNode::Symlink { .. } => Metadata::new_symlink(0o777),
+            TreeNode::File {
+                content,
+                mode,
+                uid,
+                gid,
+            } => Metadata::new(true, content.len(), *mode, *uid, *gid),
+            TreeNode::Dir { mode, uid, gid, .. } => Metadata::new(false, 0, *mode, *uid, *gid),
+            TreeNode::Symlink { uid, gid, .. } => Metadata::new_symlink(0o777, *uid, *gid),
         }
     }
 
@@ -114,17 +149,99 @@ fn split_path(path: &str) -> Vec<&str> {
 /// Recursive deletion is O(1) — just drops the subtree.
 pub struct MemFs {
     root: TreeNode,
+    current_uid: u32,
+    current_gid: u32,
+    supplementary_gids: Vec<u32>,
 }
 
 impl MemFs {
     /// Create a new filesystem containing only the root directory `/`.
+    /// Defaults to uid=0, gid=0 (root user).
     pub fn new() -> Self {
         MemFs {
             root: TreeNode::Dir {
                 mode: 0o755,
                 children: BTreeMap::new(),
+                uid: 0,
+                gid: 0,
             },
+            current_uid: 0,
+            current_gid: 0,
+            supplementary_gids: Vec::new(),
         }
+    }
+
+    /// Set the current user identity for permission checks.
+    pub fn set_current_user(&mut self, uid: u32, gid: u32) {
+        self.current_uid = uid;
+        self.current_gid = gid;
+    }
+
+    /// Add a supplementary group ID for the current user.
+    pub fn add_supplementary_gid(&mut self, gid: u32) {
+        self.supplementary_gids.push(gid);
+    }
+
+    /// Returns the current user ID.
+    pub fn current_uid(&self) -> u32 {
+        self.current_uid
+    }
+
+    /// Returns the current group ID.
+    pub fn current_gid(&self) -> u32 {
+        self.current_gid
+    }
+
+    /// Change the owner of a file or directory.
+    /// Follows symlinks (changes ownership of the target, not the symlink).
+    pub fn chown(&mut self, path: &str, uid: u32, gid: u32) -> Result<(), VfsError> {
+        match self.traverse_mut(path) {
+            Some(TreeNode::File {
+                uid: node_uid,
+                gid: node_gid,
+                ..
+            }) => {
+                *node_uid = uid;
+                *node_gid = gid;
+                Ok(())
+            }
+            Some(TreeNode::Dir {
+                uid: node_uid,
+                gid: node_gid,
+                ..
+            }) => {
+                *node_uid = uid;
+                *node_gid = gid;
+                Ok(())
+            }
+            Some(TreeNode::Symlink {
+                uid: node_uid,
+                gid: node_gid,
+                ..
+            }) => {
+                *node_uid = uid;
+                *node_gid = gid;
+                Ok(())
+            }
+            None => Err(VfsError::NotFound),
+        }
+    }
+
+    /// Check whether the current user has `mask` permission on `node`.
+    /// `mask` is a 3-bit value: bit2=read, bit1=write, bit0=execute.
+    /// root (uid==0) always passes.
+    fn check_permission(&self, node: &TreeNode, mask: u16) -> bool {
+        if self.current_uid == 0 {
+            return true;
+        }
+        let (uid, gid, mode) = node.ownership_and_mode();
+        if self.current_uid == uid {
+            return mode & (mask << 6) != 0;
+        }
+        if self.current_gid == gid || self.supplementary_gids.contains(&gid) {
+            return mode & (mask << 3) != 0;
+        }
+        mode & mask != 0
     }
 
     // -- Internal traversal -------------------------------------------------
@@ -177,7 +294,7 @@ impl MemFs {
                     }
                     // If the resolved node is a symlink and it's not the final component,
                     // we must follow it to continue traversal.
-                    if let TreeNode::Symlink { target } = node {
+                    if let TreeNode::Symlink { target, .. } = node {
                         let symlink_dir = crate::parent(&current_dir).unwrap_or("/");
                         let resolved = Self::resolve_symlink_target(target, symlink_dir);
                         // Append the remaining path components to the resolved target
@@ -195,7 +312,7 @@ impl MemFs {
             }
         }
         // Final node: if it's a symlink, follow it
-        if let TreeNode::Symlink { target } = node {
+        if let TreeNode::Symlink { target, .. } = node {
             let symlink_dir = crate::parent(&current_dir).unwrap_or("/");
             let resolved = Self::resolve_symlink_target(target, symlink_dir);
             return self.traverse_with_depth(&resolved, depth + 1);
@@ -236,7 +353,7 @@ impl MemFs {
                     }
                     // Only follow symlinks for intermediate components
                     if !is_last {
-                        if let TreeNode::Symlink { target } = node {
+                        if let TreeNode::Symlink { target, .. } = node {
                             let symlink_dir = crate::parent(&current_dir).unwrap_or("/");
                             let resolved = Self::resolve_symlink_target(target, symlink_dir);
                             let remaining = &components[i + 1..];
@@ -320,7 +437,7 @@ impl MemFs {
                     } else {
                         current_dir = alloc::format!("{}/{}", current_dir, component);
                     }
-                    if let TreeNode::Symlink { target } = node {
+                    if let TreeNode::Symlink { target, .. } = node {
                         let symlink_dir = crate::parent(&current_dir).unwrap_or("/");
                         let resolved = Self::resolve_symlink_target(target, symlink_dir);
                         let remaining = &components[i + 1..];
@@ -513,8 +630,8 @@ impl MemFs {
     /// Follows symlinks transparently.
     pub fn read(&self, path: &str) -> Result<&[u8], VfsError> {
         match self.traverse(path) {
-            Some(TreeNode::File { content, mode }) => {
-                if mode & 0o400 == 0 {
+            Some(node @ TreeNode::File { content, .. }) => {
+                if !self.check_permission(node, 4) {
                     Err(VfsError::PermissionDenied)
                 } else {
                     Ok(content)
@@ -558,7 +675,7 @@ impl MemFs {
     /// Returns [`VfsError::NotFound`] if `path` does not exist.
     pub fn read_link(&self, path: &str) -> Result<String, VfsError> {
         match self.traverse_nofollow(path) {
-            Some(TreeNode::Symlink { target }) => Ok(target.clone()),
+            Some(TreeNode::Symlink { target, .. }) => Ok(target.clone()),
             Some(_) => Err(VfsError::NotASymlink),
             None => Err(VfsError::NotFound),
         }
@@ -616,12 +733,24 @@ impl MemFs {
     /// Panics if the parent directory does not exist.
     pub fn insert(&mut self, path: String, entry: Entry) {
         let node = match entry {
-            Entry::File { content, mode } => TreeNode::File { content, mode },
-            Entry::Dir { mode } => TreeNode::Dir {
+            Entry::File {
+                content,
+                mode,
+                uid,
+                gid,
+            } => TreeNode::File {
+                content,
+                mode,
+                uid,
+                gid,
+            },
+            Entry::Dir { mode, uid, gid } => TreeNode::Dir {
                 mode,
                 children: BTreeMap::new(),
+                uid,
+                gid,
             },
-            Entry::Symlink { target } => TreeNode::Symlink { target },
+            Entry::Symlink { target, uid, gid } => TreeNode::Symlink { target, uid, gid },
         };
         if path == "/" {
             self.root = node;
@@ -645,9 +774,19 @@ impl MemFs {
         let (children, name) = self.traverse_parent_mut(&path_str)?;
         let node = children.remove(name)?;
         Some(match node {
-            TreeNode::File { content, mode } => Entry::File { content, mode },
-            TreeNode::Dir { mode, .. } => Entry::Dir { mode },
-            TreeNode::Symlink { target } => Entry::Symlink { target },
+            TreeNode::File {
+                content,
+                mode,
+                uid,
+                gid,
+            } => Entry::File {
+                content,
+                mode,
+                uid,
+                gid,
+            },
+            TreeNode::Dir { mode, uid, gid, .. } => Entry::Dir { mode, uid, gid },
+            TreeNode::Symlink { target, uid, gid } => Entry::Symlink { target, uid, gid },
         })
     }
 
@@ -661,6 +800,8 @@ impl MemFs {
             return Err(VfsError::NotFound);
         }
         let link_path_owned = link_path.to_string();
+        let uid = self.current_uid;
+        let gid = self.current_gid;
         let (children, name) = self
             .traverse_parent_mut(&link_path_owned)
             .ok_or(VfsError::NotFound)?;
@@ -668,6 +809,8 @@ impl MemFs {
             name.to_string(),
             TreeNode::Symlink {
                 target: target.to_string(),
+                uid,
+                gid,
             },
         );
         Ok(())
@@ -678,6 +821,8 @@ impl MemFs {
         let node = TreeNode::File {
             content: content.into(),
             mode: 0o644,
+            uid: self.current_uid,
+            gid: self.current_gid,
         };
         if let Some((children, name)) = self.traverse_parent_mut(path) {
             children.insert(name.to_string(), node);
@@ -689,6 +834,8 @@ impl MemFs {
         let node = TreeNode::File {
             content: content.into(),
             mode,
+            uid: self.current_uid,
+            gid: self.current_gid,
         };
         if let Some((children, name)) = self.traverse_parent_mut(path) {
             children.insert(name.to_string(), node);
@@ -698,17 +845,27 @@ impl MemFs {
     /// Append data to an existing file. Checks write permission.
     /// Follows symlinks transparently.
     pub fn append(&mut self, path: &str, data: &[u8]) -> Result<(), VfsError> {
-        match self.traverse_mut(path) {
-            Some(TreeNode::File { content, mode }) => {
-                if *mode & 0o200 == 0 {
-                    return Err(VfsError::PermissionDenied);
+        // Check permission using shared traversal first
+        let allowed = match self.traverse(path) {
+            Some(node @ TreeNode::File { .. }) => {
+                if self.check_permission(node, 2) {
+                    Ok(true)
+                } else {
+                    Err(VfsError::PermissionDenied)
                 }
+            }
+            Some(TreeNode::Dir { .. }) => Err(VfsError::IsADirectory),
+            Some(TreeNode::Symlink { .. }) => Err(VfsError::NotFound),
+            None => Err(VfsError::NotFound),
+        };
+        allowed?;
+        // Now do the mutable borrow to extend
+        match self.traverse_mut(path) {
+            Some(TreeNode::File { content, .. }) => {
                 content.extend_from_slice(data);
                 Ok(())
             }
-            Some(TreeNode::Dir { .. }) => Err(VfsError::IsADirectory),
-            Some(TreeNode::Symlink { .. }) => Err(VfsError::NotFound), // dangling
-            None => Err(VfsError::NotFound),
+            _ => Err(VfsError::NotFound),
         }
     }
 
@@ -721,12 +878,16 @@ impl MemFs {
         if !self.is_dir(parent) {
             return Err(VfsError::NotFound);
         }
+        let uid = self.current_uid;
+        let gid = self.current_gid;
         let (children, name) = self.traverse_parent_mut(path).ok_or(VfsError::NotFound)?;
         children.insert(
             name.to_string(),
             TreeNode::Dir {
                 mode: 0o755,
                 children: BTreeMap::new(),
+                uid,
+                gid,
             },
         );
         Ok(())
@@ -734,6 +895,8 @@ impl MemFs {
 
     /// Create a directory and all missing ancestors.
     pub fn create_dir_all(&mut self, path: &str) {
+        let uid = self.current_uid;
+        let gid = self.current_gid;
         let components = split_path(path);
         let mut node = &mut self.root;
         for component in components {
@@ -747,6 +910,8 @@ impl MemFs {
                 .or_insert_with(|| TreeNode::Dir {
                     mode: 0o755,
                     children: BTreeMap::new(),
+                    uid,
+                    gid,
                 });
         }
     }
@@ -756,12 +921,16 @@ impl MemFs {
         if self.exists(path) {
             return;
         }
+        let uid = self.current_uid;
+        let gid = self.current_gid;
         if let Some((children, name)) = self.traverse_parent_mut(path) {
             children
                 .entry(name.to_string())
                 .or_insert_with(|| TreeNode::File {
                     content: Vec::new(),
                     mode: 0o644,
+                    uid,
+                    gid,
                 });
         }
     }
@@ -804,12 +973,12 @@ impl MemFs {
     /// Copy a file. Checks read permission on the source.
     /// Follows symlinks on the source.
     pub fn copy(&mut self, src: &str, dst: &str) -> Result<(), VfsError> {
-        let (content, _mode) = match self.traverse(src) {
-            Some(TreeNode::File { content, mode }) => {
-                if mode & 0o400 == 0 {
+        let content = match self.traverse(src) {
+            Some(node @ TreeNode::File { content, .. }) => {
+                if !self.check_permission(node, 4) {
                     return Err(VfsError::PermissionDenied);
                 }
-                (content.clone(), *mode)
+                content.clone()
             }
             Some(TreeNode::Dir { .. }) => return Err(VfsError::IsADirectory),
             Some(TreeNode::Symlink { .. }) => return Err(VfsError::NotFound), // dangling
@@ -818,6 +987,8 @@ impl MemFs {
         let node = TreeNode::File {
             content,
             mode: 0o644,
+            uid: self.current_uid,
+            gid: self.current_gid,
         };
         if let Some((children, name)) = self.traverse_parent_mut(dst) {
             children.insert(name.to_string(), node);
@@ -916,6 +1087,7 @@ mod tests {
     fn write_with_mode_sets_permissions() {
         let mut fs = MemFs::new();
         fs.write_with_mode("/secret", "x".to_string(), 0o000);
+        fs.set_current_user(1000, 1000);
         assert_eq!(fs.read("/secret"), Err(VfsError::PermissionDenied));
     }
 
@@ -1012,6 +1184,7 @@ mod tests {
     fn append_permission_denied() {
         let mut fs = MemFs::new();
         fs.write_with_mode("/ro", "x", 0o444);
+        fs.set_current_user(1000, 1000);
         assert_eq!(fs.append("/ro", b"y"), Err(VfsError::PermissionDenied));
     }
 
@@ -1135,7 +1308,10 @@ mod tests {
         let mut fs = MemFs::new();
         fs.write("/f.txt", "x".to_string());
         fs.set_mode("/f.txt", 0o000).unwrap();
+        fs.set_current_user(1000, 1000);
         assert_eq!(fs.read("/f.txt"), Err(VfsError::PermissionDenied));
+        // Switch back to root to re-enable read
+        fs.set_current_user(0, 0);
         fs.set_mode("/f.txt", 0o644).unwrap();
         assert_eq!(fs.read_to_string("/f.txt"), Ok("x"));
     }
@@ -1182,6 +1358,7 @@ mod tests {
     fn copy_permission_denied() {
         let mut fs = MemFs::new();
         fs.write_with_mode("/secret", "x", 0o000);
+        fs.set_current_user(1000, 1000);
         assert_eq!(fs.copy("/secret", "/dst"), Err(VfsError::PermissionDenied));
     }
 
@@ -1855,5 +2032,162 @@ mod tests {
         assert!(!fs.is_symlink("/f.txt"));
         assert!(!fs.is_symlink("/d"));
         assert!(!fs.is_symlink("/missing"));
+    }
+
+    // -- uid/gid tests -------------------------------------------------------
+
+    #[test]
+    fn chown_changes_ownership() {
+        let mut fs = MemFs::new();
+        fs.write("/f.txt", "data");
+        fs.chown("/f.txt", 1000, 2000).unwrap();
+        let m = fs.metadata("/f.txt").unwrap();
+        assert_eq!(m.uid(), 1000);
+        assert_eq!(m.gid(), 2000);
+    }
+
+    #[test]
+    fn chown_directory() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/d");
+        fs.chown("/d", 500, 500).unwrap();
+        let m = fs.metadata("/d").unwrap();
+        assert_eq!(m.uid(), 500);
+        assert_eq!(m.gid(), 500);
+    }
+
+    #[test]
+    fn chown_not_found() {
+        let mut fs = MemFs::new();
+        assert_eq!(fs.chown("/nope", 1000, 1000), Err(VfsError::NotFound));
+    }
+
+    #[test]
+    fn permission_owner_bits() {
+        let mut fs = MemFs::new();
+        // Create file owned by uid=1000, readable by owner only (0o400)
+        fs.write_with_mode("/f.txt", "data", 0o400);
+        fs.chown("/f.txt", 1000, 2000).unwrap();
+
+        // As owner: read allowed
+        fs.set_current_user(1000, 9999);
+        assert_eq!(fs.read_to_string("/f.txt"), Ok("data"));
+
+        // As group member: no group read bit
+        fs.set_current_user(9999, 2000);
+        assert_eq!(fs.read("/f.txt"), Err(VfsError::PermissionDenied));
+
+        // As other: no other read bit
+        fs.set_current_user(9999, 9999);
+        assert_eq!(fs.read("/f.txt"), Err(VfsError::PermissionDenied));
+    }
+
+    #[test]
+    fn permission_group_bits() {
+        let mut fs = MemFs::new();
+        // Readable by group only (0o040)
+        fs.write_with_mode("/f.txt", "data", 0o040);
+        fs.chown("/f.txt", 1000, 2000).unwrap();
+
+        // Owner but not group: owner bits empty
+        fs.set_current_user(1000, 9999);
+        assert_eq!(fs.read("/f.txt"), Err(VfsError::PermissionDenied));
+
+        // Group member: allowed
+        fs.set_current_user(9999, 2000);
+        assert_eq!(fs.read_to_string("/f.txt"), Ok("data"));
+
+        // Other: not allowed
+        fs.set_current_user(9999, 9999);
+        assert_eq!(fs.read("/f.txt"), Err(VfsError::PermissionDenied));
+    }
+
+    #[test]
+    fn permission_other_bits() {
+        let mut fs = MemFs::new();
+        // World-readable (0o004)
+        fs.write_with_mode("/f.txt", "data", 0o004);
+        fs.chown("/f.txt", 1000, 2000).unwrap();
+
+        // Owner: owner bits empty
+        fs.set_current_user(1000, 9999);
+        assert_eq!(fs.read("/f.txt"), Err(VfsError::PermissionDenied));
+
+        // Group: group bits empty
+        fs.set_current_user(9999, 2000);
+        assert_eq!(fs.read("/f.txt"), Err(VfsError::PermissionDenied));
+
+        // Other: allowed
+        fs.set_current_user(9999, 9999);
+        assert_eq!(fs.read_to_string("/f.txt"), Ok("data"));
+    }
+
+    #[test]
+    fn root_bypasses_permissions() {
+        let mut fs = MemFs::new();
+        fs.write_with_mode("/secret", "x", 0o000);
+        // root (uid=0) can always read
+        assert_eq!(fs.read_to_string("/secret"), Ok("x"));
+        // root can always append
+        assert!(fs.append("/secret", b"y").is_ok());
+    }
+
+    #[test]
+    fn supplementary_gids() {
+        let mut fs = MemFs::new();
+        fs.write_with_mode("/f.txt", "data", 0o040);
+        fs.chown("/f.txt", 1000, 2000).unwrap();
+
+        // User 9999, primary gid 9999, supplementary gid 2000
+        fs.set_current_user(9999, 9999);
+        fs.add_supplementary_gid(2000);
+        assert_eq!(fs.read_to_string("/f.txt"), Ok("data"));
+    }
+
+    #[test]
+    fn new_files_inherit_current_user() {
+        let mut fs = MemFs::new();
+        fs.set_current_user(1000, 2000);
+
+        fs.write("/f.txt", "data");
+        let m = fs.metadata("/f.txt").unwrap();
+        assert_eq!(m.uid(), 1000);
+        assert_eq!(m.gid(), 2000);
+
+        fs.create_dir_all("/d");
+        let md = fs.metadata("/d").unwrap();
+        assert_eq!(md.uid(), 1000);
+        assert_eq!(md.gid(), 2000);
+
+        fs.touch("/t.txt");
+        let mt = fs.metadata("/t.txt").unwrap();
+        assert_eq!(mt.uid(), 1000);
+        assert_eq!(mt.gid(), 2000);
+
+        fs.symlink("/f.txt", "/link").unwrap();
+        // symlink_metadata to get the symlink's own uid/gid
+        let ms = fs.symlink_metadata("/link").unwrap();
+        assert_eq!(ms.uid(), 1000);
+        assert_eq!(ms.gid(), 2000);
+    }
+
+    #[test]
+    fn entryref_has_uid_gid() {
+        let mut fs = MemFs::new();
+        fs.set_current_user(42, 99);
+        fs.write("/f.txt", "hello");
+        let e = fs.get("/f.txt").unwrap();
+        assert_eq!(e.uid(), 42);
+        assert_eq!(e.gid(), 99);
+    }
+
+    #[test]
+    fn current_uid_gid_getters() {
+        let mut fs = MemFs::new();
+        assert_eq!(fs.current_uid(), 0);
+        assert_eq!(fs.current_gid(), 0);
+        fs.set_current_user(500, 600);
+        assert_eq!(fs.current_uid(), 500);
+        assert_eq!(fs.current_gid(), 600);
     }
 }

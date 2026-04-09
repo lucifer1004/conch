@@ -5,44 +5,63 @@ use alloc::vec::Vec;
 #[derive(Debug, Clone)]
 pub enum Entry {
     /// A regular file with byte content and a Unix permission mode.
-    File { content: Vec<u8>, mode: u16 },
+    File {
+        content: Vec<u8>,
+        mode: u16,
+        uid: u32,
+        gid: u32,
+    },
     /// A directory with a Unix permission mode.
-    Dir { mode: u16 },
+    Dir { mode: u16, uid: u32, gid: u32 },
     /// A symbolic link pointing to `target`. Mode is always `0o777`.
-    Symlink { target: String },
+    Symlink { target: String, uid: u32, gid: u32 },
 }
 
 impl Entry {
-    /// Create a file with default permissions (`0o644`).
+    /// Create a file with default permissions (`0o644`), owned by root.
     pub fn file(content: impl Into<Vec<u8>>) -> Self {
         Entry::File {
             content: content.into(),
             mode: 0o644,
+            uid: 0,
+            gid: 0,
         }
     }
 
-    /// Create a file with explicit permissions.
+    /// Create a file with explicit permissions, owned by root.
     pub fn file_with_mode(content: impl Into<Vec<u8>>, mode: u16) -> Self {
         Entry::File {
             content: content.into(),
             mode,
+            uid: 0,
+            gid: 0,
         }
     }
 
-    /// Create a directory with default permissions (`0o755`).
+    /// Create a directory with default permissions (`0o755`), owned by root.
     pub fn dir() -> Self {
-        Entry::Dir { mode: 0o755 }
+        Entry::Dir {
+            mode: 0o755,
+            uid: 0,
+            gid: 0,
+        }
     }
 
-    /// Create a directory with explicit permissions.
+    /// Create a directory with explicit permissions, owned by root.
     pub fn dir_with_mode(mode: u16) -> Self {
-        Entry::Dir { mode }
+        Entry::Dir {
+            mode,
+            uid: 0,
+            gid: 0,
+        }
     }
 
-    /// Create a symbolic link pointing to `target`.
+    /// Create a symbolic link pointing to `target`, owned by root.
     pub fn symlink(target: impl Into<String>) -> Self {
         Entry::Symlink {
             target: target.into(),
+            uid: 0,
+            gid: 0,
         }
     }
 
@@ -94,6 +113,20 @@ impl Entry {
         }
     }
 
+    /// Returns the owner user ID.
+    pub fn uid(&self) -> u32 {
+        match self {
+            Entry::File { uid, .. } | Entry::Dir { uid, .. } | Entry::Symlink { uid, .. } => *uid,
+        }
+    }
+
+    /// Returns the owner group ID.
+    pub fn gid(&self) -> u32 {
+        match self {
+            Entry::File { gid, .. } | Entry::Dir { gid, .. } | Entry::Symlink { gid, .. } => *gid,
+        }
+    }
+
     /// Returns `true` if the owner read bit is set.
     pub fn is_readable(&self) -> bool {
         self.mode() & 0o400 != 0
@@ -128,11 +161,16 @@ impl Entry {
 #[derive(Debug, Clone, Copy)]
 pub enum EntryRef<'a> {
     /// A regular file.
-    File { content: &'a [u8], mode: u16 },
+    File {
+        content: &'a [u8],
+        mode: u16,
+        uid: u32,
+        gid: u32,
+    },
     /// A directory.
-    Dir { mode: u16 },
+    Dir { mode: u16, uid: u32, gid: u32 },
     /// A symbolic link with a borrowed target path.
-    Symlink { target: &'a str },
+    Symlink { target: &'a str, uid: u32, gid: u32 },
 }
 
 impl<'a> EntryRef<'a> {
@@ -184,6 +222,24 @@ impl<'a> EntryRef<'a> {
         }
     }
 
+    /// Returns the owner user ID.
+    pub fn uid(&self) -> u32 {
+        match self {
+            EntryRef::File { uid, .. }
+            | EntryRef::Dir { uid, .. }
+            | EntryRef::Symlink { uid, .. } => *uid,
+        }
+    }
+
+    /// Returns the owner group ID.
+    pub fn gid(&self) -> u32 {
+        match self {
+            EntryRef::File { gid, .. }
+            | EntryRef::Dir { gid, .. }
+            | EntryRef::Symlink { gid, .. } => *gid,
+        }
+    }
+
     /// Returns `true` if the owner read bit is set.
     pub fn is_readable(&self) -> bool {
         self.mode() & 0o400 != 0
@@ -215,6 +271,8 @@ mod tests {
         assert_eq!(e.content_str(), Some("hello"));
         assert_eq!(e.len(), 5);
         assert_eq!(e.mode(), 0o644);
+        assert_eq!(e.uid(), 0);
+        assert_eq!(e.gid(), 0);
         assert!(e.is_readable());
         assert!(e.is_writable());
         assert!(!e.is_executable());
@@ -242,6 +300,8 @@ mod tests {
         assert_eq!(e.content_str(), None);
         assert_eq!(e.len(), 0);
         assert_eq!(e.mode(), 0o755);
+        assert_eq!(e.uid(), 0);
+        assert_eq!(e.gid(), 0);
         assert!(e.is_readable());
         assert!(e.is_writable());
         assert!(e.is_executable());
@@ -282,6 +342,8 @@ mod tests {
         let r = EntryRef::File {
             content: &data,
             mode: 0o755,
+            uid: 1000,
+            gid: 1000,
         };
         assert!(r.is_file());
         assert!(!r.is_dir());
@@ -289,6 +351,8 @@ mod tests {
         assert_eq!(r.content_str(), Some("hello"));
         assert_eq!(r.len(), 5);
         assert_eq!(r.mode(), 0o755);
+        assert_eq!(r.uid(), 1000);
+        assert_eq!(r.gid(), 1000);
         assert!(r.is_readable());
         assert!(r.is_writable());
         assert!(r.is_executable());
@@ -296,7 +360,11 @@ mod tests {
 
     #[test]
     fn entry_ref_dir() {
-        let r = EntryRef::Dir { mode: 0o500 };
+        let r = EntryRef::Dir {
+            mode: 0o500,
+            uid: 0,
+            gid: 0,
+        };
         assert!(r.is_dir());
         assert!(!r.is_file());
         assert_eq!(r.content(), None);
@@ -314,6 +382,8 @@ mod tests {
         let r = EntryRef::File {
             content: &data,
             mode: 0o644,
+            uid: 0,
+            gid: 0,
         };
         assert_eq!(r.content(), Some([0u8, 0xFF].as_slice()));
         assert_eq!(r.content_str(), None);
@@ -324,9 +394,40 @@ mod tests {
         let r = EntryRef::File {
             content: b"x",
             mode: 0o000,
+            uid: 0,
+            gid: 0,
         };
         assert!(!r.is_readable());
         assert!(!r.is_writable());
         assert!(!r.is_executable());
+    }
+
+    #[test]
+    fn entryref_has_uid_gid() {
+        let data = b"test";
+        let r = EntryRef::File {
+            content: data,
+            mode: 0o644,
+            uid: 42,
+            gid: 99,
+        };
+        assert_eq!(r.uid(), 42);
+        assert_eq!(r.gid(), 99);
+
+        let d = EntryRef::Dir {
+            mode: 0o755,
+            uid: 1,
+            gid: 2,
+        };
+        assert_eq!(d.uid(), 1);
+        assert_eq!(d.gid(), 2);
+
+        let s = EntryRef::Symlink {
+            target: "/foo",
+            uid: 500,
+            gid: 500,
+        };
+        assert_eq!(s.uid(), 500);
+        assert_eq!(s.gid(), 500);
     }
 }

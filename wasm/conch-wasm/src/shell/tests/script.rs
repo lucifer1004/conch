@@ -74,3 +74,21 @@ fn exec_missing_script() {
     assert_eq!(code, 127);
     assert!(out.contains("No such file"), "got {:?}", out);
 }
+
+#[test]
+fn sh_runs_script_like_bash() {
+    let mut s = shell_with_files(serde_json::json!({
+        "run.sh": { "content": "echo fromsh\n", "mode": 755 }
+    }));
+    let (out, code, _) = s.run_line("sh run.sh");
+    assert_eq!(code, 0);
+    assert!(out.contains("fromsh"), "got {:?}", out);
+}
+
+#[test]
+fn sh_missing_script() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("sh nope.sh");
+    assert_eq!(code, 1);
+    assert!(out.contains("No such file"), "got {:?}", out);
+}

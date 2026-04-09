@@ -34,14 +34,15 @@ impl Shell {
             let mode_octal = format!("{:04o}", mode);
 
             out.push(format!(
-                "  File: {}\n  Size: {:<12}Type: {}\n  Mode: ({}/{}{}{})",
+                "  File: {}\n  Size: {:<12}Type: {}\n  Mode: ({}/{}{})\n  Uid: {:<8} Gid: {}",
                 name,
                 size,
                 type_str,
                 mode_octal,
                 if meta.is_dir() { "d" } else { "-" },
                 mode_str,
-                ""
+                meta.uid(),
+                meta.gid(),
             ));
         }
 

@@ -4,6 +4,7 @@ pub mod keyline;
 mod parser;
 mod shell;
 mod types;
+mod userdb;
 
 use shell::Shell;
 use types::*;

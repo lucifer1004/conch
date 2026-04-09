@@ -121,3 +121,12 @@ fn true_and_runs_following_command() {
     assert_eq!(code, 0);
     assert_eq!(out.trim(), "chained");
 }
+
+#[test]
+fn clear_resets_entries() {
+    // clear is tested in lib.rs integration, but verify the output token
+    let mut s = shell();
+    let entry = s.execute("clear");
+    assert_eq!(entry.output, "__CLEAR__");
+    assert_eq!(entry.exit_code, 0);
+}

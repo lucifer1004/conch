@@ -56,7 +56,17 @@ impl Shell {
                     } else {
                         name.clone()
                     };
-                    format!("{}{}  {} {}  {}", ty, ms, self.user, self.user, display)
+                    let entry_path = format!("{}/{}", target, name);
+                    let (owner, group) = if let Some(e) = self.fs.get(&entry_path) {
+                        let uid = e.uid();
+                        let gid = e.gid();
+                        let owner = self.users.uid_to_name(uid);
+                        let group_name = self.users.gid_to_name(gid);
+                        (owner, group_name)
+                    } else {
+                        (self.user.clone(), self.user.clone())
+                    };
+                    format!("{}{}  {} {}  {}", ty, ms, owner, group, display)
                 } else if *is_dir {
                     format!("{}{}/{}", ansi::BOLD_BLUE, name, ansi::RESET)
                 } else {
@@ -503,6 +513,177 @@ impl Shell {
         match self.fs.read_link(&path) {
             Ok(target) => (target, 0),
             Err(_) => (format!("readlink: {}: Invalid argument", args[0]), 1),
+        }
+    }
+
+    pub fn cmd_chown(&mut self, args: &[String]) -> (String, i32) {
+        let mut recursive = false;
+        let mut positional = Vec::new();
+
+        let mut parser = lexopt::Parser::from_args(args.iter().cloned());
+        loop {
+            match parser.next() {
+                Ok(Some(lexopt::Arg::Short('R'))) => recursive = true,
+                Ok(Some(lexopt::Arg::Value(val))) => {
+                    positional.push(val.to_string_lossy().to_string())
+                }
+                Ok(Some(_)) => {}
+                Ok(None) | Err(_) => break,
+            }
+        }
+
+        if positional.len() < 2 {
+            return ("chown: missing operand".into(), 1);
+        }
+
+        let spec = &positional[0];
+        let (uid, gid) = self.parse_owner_spec_userdb(spec);
+
+        let targets: Vec<String> = positional[1..].iter().map(|s| self.resolve(s)).collect();
+        let orig_args: Vec<String> = positional[1..].iter().cloned().collect();
+
+        for (path, orig) in targets.iter().zip(orig_args.iter()) {
+            if recursive && self.fs.is_dir(path) {
+                let prefix = format!("{}/", path);
+                let all_paths: Vec<String> = self
+                    .fs
+                    .iter()
+                    .into_iter()
+                    .filter(|(p, _)| p == path || p.starts_with(&prefix))
+                    .map(|(p, _)| p.to_string())
+                    .collect();
+                for p in all_paths {
+                    if let Err(_) = self.fs.chown(&p, uid, gid) {
+                        return (
+                            format!("chown: cannot access '{}': No such file or directory", orig),
+                            1,
+                        );
+                    }
+                }
+            } else {
+                if let Err(_) = self.fs.chown(path, uid, gid) {
+                    return (
+                        format!("chown: cannot access '{}': No such file or directory", orig),
+                        1,
+                    );
+                }
+            }
+        }
+        (String::new(), 0)
+    }
+
+    pub fn cmd_chgrp(&mut self, args: &[String]) -> (String, i32) {
+        let mut recursive = false;
+        let mut positional = Vec::new();
+
+        let mut parser = lexopt::Parser::from_args(args.iter().cloned());
+        loop {
+            match parser.next() {
+                Ok(Some(lexopt::Arg::Short('R'))) => recursive = true,
+                Ok(Some(lexopt::Arg::Value(val))) => {
+                    positional.push(val.to_string_lossy().to_string())
+                }
+                Ok(Some(_)) => {}
+                Ok(None) | Err(_) => break,
+            }
+        }
+
+        if positional.len() < 2 {
+            return ("chgrp: missing operand".into(), 1);
+        }
+
+        let group_str = &positional[0];
+        let gid = self
+            .users
+            .resolve_gid(group_str)
+            .unwrap_or(self.fs.current_gid());
+
+        let targets: Vec<String> = positional[1..].iter().map(|s| self.resolve(s)).collect();
+        let orig_args: Vec<String> = positional[1..].iter().cloned().collect();
+
+        for (path, orig) in targets.iter().zip(orig_args.iter()) {
+            if recursive && self.fs.is_dir(path) {
+                let prefix = format!("{}/", path);
+                let all_paths: Vec<String> = self
+                    .fs
+                    .iter()
+                    .into_iter()
+                    .filter(|(p, _)| p == path || p.starts_with(&prefix))
+                    .map(|(p, _)| p.to_string())
+                    .collect();
+                for p in all_paths {
+                    let uid = self.fs.get(&p).map(|e| e.uid()).unwrap_or(0);
+                    if let Err(_) = self.fs.chown(&p, uid, gid) {
+                        return (
+                            format!("chgrp: cannot access '{}': No such file or directory", orig),
+                            1,
+                        );
+                    }
+                }
+            } else {
+                let uid = self.fs.get(path).map(|e| e.uid()).unwrap_or(0);
+                if let Err(_) = self.fs.chown(path, uid, gid) {
+                    return (
+                        format!("chgrp: cannot access '{}': No such file or directory", orig),
+                        1,
+                    );
+                }
+            }
+        }
+        (String::new(), 0)
+    }
+
+    pub fn cmd_id(&self, _args: &[String]) -> (String, i32) {
+        let uid = self.fs.current_uid();
+        let gid = self.fs.current_gid();
+        let uname = self.users.uid_to_name(uid);
+        let gname = self.users.gid_to_name(gid);
+        let groups_str = {
+            let mut gs = self.users.user_groups(&uname);
+            gs.sort_by_key(|g| g.gid);
+            gs.iter()
+                .map(|g| format!("{}({})", g.gid, g.name))
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        let out = format!(
+            "uid={}({}) gid={}({}) groups={}",
+            uid, uname, gid, gname, groups_str
+        );
+        (out, 0)
+    }
+
+    pub fn cmd_groups(&self, _args: &[String]) -> (String, i32) {
+        let uname = self.users.uid_to_name(self.fs.current_uid());
+        let mut gs = self.users.user_groups(&uname);
+        gs.sort_by_key(|g| g.gid);
+        let out = gs
+            .iter()
+            .map(|g| g.name.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        (out, 0)
+    }
+
+    /// Parse `user:group`, `user:`, `:group`, or `user` into (uid, gid) using UserDb.
+    fn parse_owner_spec_userdb(&self, spec: &str) -> (u32, u32) {
+        let default_uid = self.fs.current_uid();
+        let default_gid = self.fs.current_gid();
+        if let Some((user_part, group_part)) = spec.split_once(':') {
+            let uid = if user_part.is_empty() {
+                default_uid
+            } else {
+                self.users.resolve_uid(user_part).unwrap_or(default_uid)
+            };
+            let gid = if group_part.is_empty() {
+                default_gid
+            } else {
+                self.users.resolve_gid(group_part).unwrap_or(default_gid)
+            };
+            (uid, gid)
+        } else {
+            let uid = self.users.resolve_uid(spec).unwrap_or(default_uid);
+            (uid, default_gid)
         }
     }
 }

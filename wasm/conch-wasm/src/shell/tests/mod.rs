@@ -8,6 +8,7 @@ mod nav;
 mod script;
 mod text;
 mod transform;
+mod user;
 
 pub fn shell_with_files(files: serde_json::Value) -> Shell {
     let v = serde_json::json!({

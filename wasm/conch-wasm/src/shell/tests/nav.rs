@@ -167,3 +167,41 @@ fn realpath_resolves_relative() {
     assert_eq!(code, 0);
     assert_eq!(out, "/home/u/sub");
 }
+
+#[test]
+fn id_shows_user_info() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("id");
+    assert_eq!(code, 0);
+    assert!(out.contains("uid="), "expected uid= in output: {:?}", out);
+    assert!(out.contains("gid="), "expected gid= in output: {:?}", out);
+    assert!(
+        out.contains("(u)"),
+        "expected username in output: {:?}",
+        out
+    );
+}
+
+#[test]
+fn groups_shows_groups() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("groups");
+    assert_eq!(code, 0);
+    assert_eq!(out, "u");
+}
+
+#[test]
+fn hostname_returns_configured_name() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("hostname");
+    assert_eq!(code, 0);
+    assert_eq!(out, "h");
+}
+
+#[test]
+fn type_unknown_command() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("type nosuchcmd");
+    assert_eq!(code, 0);
+    assert!(out.contains("not found"), "got {:?}", out);
+}

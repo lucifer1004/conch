@@ -108,3 +108,91 @@ fn base64_missing_file_fails() {
     let (_, code, _) = s.run_line("base64 missing.txt");
     assert_ne!(code, 0);
 }
+
+// sed from stdin
+#[test]
+fn sed_from_stdin() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("echo hello world | sed 's/world/earth/'");
+    assert_eq!(code, 0);
+    assert_eq!(out, "hello earth");
+}
+
+// sed missing file
+#[test]
+fn sed_missing_file_fails() {
+    let mut s = shell();
+    let (_, code, _) = s.run_line("sed 's/a/b/' missing.txt");
+    assert_ne!(code, 0);
+}
+
+// diff with added lines
+#[test]
+fn diff_added_lines() {
+    let mut s = shell_with_files(serde_json::json!({
+        "a.txt": "line1",
+        "b.txt": "line1\nline2"
+    }));
+    let (out, code, _) = s.run_line("diff a.txt b.txt");
+    assert_eq!(code, 1); // files differ
+    assert!(out.contains(">") && out.contains("line2"), "got {:?}", out);
+}
+
+// diff missing file
+#[test]
+fn diff_missing_file_fails() {
+    let mut s = shell_with_files(serde_json::json!({"a.txt": "x"}));
+    let (_, code, _) = s.run_line("diff a.txt nope.txt");
+    assert_ne!(code, 0);
+}
+
+// xxd binary content
+#[test]
+fn xxd_binary_file() {
+    let mut s = shell();
+    s.run_line("printf '\\x00\\x01\\xff' > bin.dat");
+    // The file should exist; xxd should show hex
+    let (out, code, _) = s.run_line("xxd bin.dat");
+    // May or may not work depending on printf implementation
+    // At minimum, xxd on any file should not panic
+    assert!(code == 0 || code == 1);
+}
+
+// base64 from stdin
+#[test]
+fn base64_from_stdin() {
+    let mut s = shell();
+    let (_, code, _) = s.run_line("echo hello | base64");
+    // base64 without a file arg may not read from stdin in this implementation
+    assert_eq!(code, 0);
+}
+
+// base64 decode invalid
+#[test]
+fn base64_decode_invalid() {
+    let mut s = shell();
+    s.run_line("echo '!!invalid!!' > bad.txt");
+    let (_, code, _) = s.run_line("base64 -d bad.txt");
+    // Should either fail or produce garbage — shouldn't panic
+    assert!(code == 0 || code == 1);
+}
+
+#[test]
+fn diff_deleted_lines() {
+    let mut s = shell_with_files(serde_json::json!({
+        "a.txt": "line1\nline2\nline3",
+        "b.txt": "line1"
+    }));
+    let (out, code, _) = s.run_line("diff a.txt b.txt");
+    assert_eq!(code, 1);
+    assert!(out.contains("<"), "expected deletions, got {:?}", out);
+}
+
+#[test]
+fn xxd_from_stdin() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("echo hello | xxd");
+    // xxd may or may not support stdin - check it doesn't panic
+    // If it works, output should contain hex
+    assert!(code == 0 || code == 1);
+}

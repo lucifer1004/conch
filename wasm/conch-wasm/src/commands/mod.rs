@@ -4,6 +4,7 @@ mod nav;
 mod script;
 mod text;
 mod transform;
+mod user;
 
 use crate::shell::Shell;
 
@@ -53,6 +54,10 @@ pub fn dispatch(shell: &mut Shell, cmd: &str, args: &[String], stdin: Option<&st
         "find" => plain(shell.cmd_find(args)),
         "tee" => plain(shell.cmd_tee(args, stdin)),
         "chmod" => plain(shell.cmd_chmod(args)),
+        "chown" => plain(shell.cmd_chown(args)),
+        "chgrp" => plain(shell.cmd_chgrp(args)),
+        "id" => plain(shell.cmd_id(args)),
+        "groups" => plain(shell.cmd_groups(args)),
 
         // Text processing
         "echo" | "printf" => {
@@ -105,6 +110,15 @@ pub fn dispatch(shell: &mut Shell, cmd: &str, args: &[String], stdin: Option<&st
         // Script execution
         "bash" | "sh" => plain(shell.cmd_bash(args)),
 
+        // User management
+        "useradd" | "adduser" => plain(shell.cmd_useradd(args)),
+        "groupadd" | "addgroup" => plain(shell.cmd_groupadd(args)),
+        "userdel" | "deluser" => plain(shell.cmd_userdel(args)),
+        "usermod" => plain(shell.cmd_usermod(args)),
+        "su" => plain(shell.cmd_su(args)),
+        "sudo" => plain(shell.cmd_sudo(args)),
+        "passwd" => plain(shell.cmd_passwd(args)),
+
         // Builtins
         "clear" => plain(("__CLEAR__".to_string(), 0)),
         "true" => plain((String::new(), 0)),
@@ -119,13 +133,15 @@ pub fn dispatch(shell: &mut Shell, cmd: &str, args: &[String], stdin: Option<&st
 pub const BUILTINS: &[&str] = &[
     // Filesystem
     "ls", "cat", "mkdir", "rmdir", "touch", "mktemp", "rm", "cp", "mv", "ln", "readlink", "find",
-    "tee", "chmod", // Text processing
+    "tee", "chmod", "chown", "chgrp", "id", "groups", // Text processing
     "echo", "printf", "head", "tail", "wc", "grep", "sort", "uniq", "cut", "tr", "rev", "seq",
     "tac", "nl", "paste", // Text transformation
     "sed", "diff", "xxd", "base64", // File inspection
     "stat", "test", "[", "du", "tree", // Navigation & environment
     "cd", "pwd", "basename", "dirname", "realpath", "whoami", "hostname", "date", "which", "type",
     "env", "printenv", "export", // Script execution
-    "bash", "sh", // Shell builtins
+    "bash", "sh", // User management
+    "useradd", "adduser", "groupadd", "addgroup", "userdel", "deluser", "usermod", "su", "sudo",
+    "passwd", // Shell builtins
     "clear", "true", "false",
 ];

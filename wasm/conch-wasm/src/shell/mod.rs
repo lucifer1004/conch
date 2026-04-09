@@ -5,6 +5,7 @@ use bare_vfs::MemFs;
 use globset::Glob;
 
 use crate::types::*;
+use crate::userdb::UserDb;
 
 /// Convert a "decimal-encoded octal" mode (e.g., 755 as u16) to actual octal (0o755).
 /// Users write `mode: 755` in Typst, which JSON encodes as decimal 755.
@@ -25,6 +26,7 @@ pub struct Shell {
     pub(crate) home: String,
     pub(crate) env: BTreeMap<String, String>,
     pub(crate) last_exit_code: i32,
+    pub(crate) users: UserDb,
 }
 
 impl Shell {
@@ -70,6 +72,11 @@ impl Shell {
             env.insert("DATE".to_string(), date.clone());
         }
 
+        let mut users = UserDb::new();
+        users.add_root();
+        users.add_user_with_ids(&config.user, 1000, 1000, home);
+        fs.set_current_user(1000, 1000);
+
         Shell {
             fs,
             cwd: home.clone(),
@@ -78,6 +85,7 @@ impl Shell {
             home: home.clone(),
             env,
             last_exit_code: 0,
+            users,
         }
     }
 

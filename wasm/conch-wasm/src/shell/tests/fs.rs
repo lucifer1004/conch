@@ -401,3 +401,149 @@ fn mktemp_names_are_unique() {
     let (out2, _, _) = s.run_line("mktemp");
     assert_ne!(out1.trim(), out2.trim(), "mktemp names should differ");
 }
+
+#[test]
+fn chown_changes_file_owner() {
+    let mut s = shell_with_files(serde_json::json!({ "f.txt": "data" }));
+    let (_, code, _) = s.run_line("chown 500 f.txt");
+    assert_eq!(code, 0);
+    let (stat_out, _, _) = s.run_line("stat f.txt");
+    assert!(
+        stat_out.contains("500"),
+        "expected uid 500 in stat: {:?}",
+        stat_out
+    );
+}
+
+#[test]
+fn chown_user_colon_group() {
+    let mut s = shell_with_files(serde_json::json!({ "g.txt": "data" }));
+    let (_, code, _) = s.run_line("chown 42:99 g.txt");
+    assert_eq!(code, 0);
+    let (stat_out, _, _) = s.run_line("stat g.txt");
+    assert!(
+        stat_out.contains("42"),
+        "expected uid 42 in stat: {:?}",
+        stat_out
+    );
+    assert!(
+        stat_out.contains("99"),
+        "expected gid 99 in stat: {:?}",
+        stat_out
+    );
+}
+
+#[test]
+fn chgrp_changes_file_group() {
+    let mut s = shell_with_files(serde_json::json!({ "h.txt": "data" }));
+    let (_, code, _) = s.run_line("chgrp 777 h.txt");
+    assert_eq!(code, 0);
+    let (stat_out, _, _) = s.run_line("stat h.txt");
+    assert!(
+        stat_out.contains("777"),
+        "expected gid 777 in stat: {:?}",
+        stat_out
+    );
+}
+
+// ln: symlink to directory
+#[test]
+fn ln_s_symlink_to_dir_and_ls() {
+    let mut s = shell();
+    s.run_line("mkdir mydir");
+    s.run_line("touch mydir/a.txt");
+    let (_, c, _) = s.run_line("ln -s mydir link");
+    assert_eq!(c, 0);
+    let (out, code, _) = s.run_line("ls link");
+    assert_eq!(code, 0);
+    assert!(out.contains("a.txt"), "got {:?}", out);
+}
+
+// ln: dangling symlink
+#[test]
+fn ln_s_dangling_symlink() {
+    let mut s = shell();
+    s.run_line("ln -s nowhere.txt dangling");
+    let (out, code, _) = s.run_line("cat dangling");
+    assert_ne!(code, 0);
+    assert!(out.contains("No such file"), "got {:?}", out);
+}
+
+// readlink on non-symlink
+#[test]
+fn readlink_non_symlink_fails() {
+    let mut s = shell_with_files(serde_json::json!({"f.txt": "x"}));
+    let (_, code, _) = s.run_line("readlink f.txt");
+    assert_ne!(code, 0);
+}
+
+// readlink on missing
+#[test]
+fn readlink_missing_fails() {
+    let mut s = shell();
+    let (_, code, _) = s.run_line("readlink nope");
+    assert_ne!(code, 0);
+}
+
+// chown -R recursive
+#[test]
+fn chown_recursive() {
+    let mut s = shell();
+    s.run_line("mkdir -p d/sub");
+    s.run_line("touch d/sub/f.txt");
+    let (_, code, _) = s.run_line("chown -R 2000:2000 d");
+    assert_eq!(code, 0);
+    let (out, _, _) = s.run_line("stat d/sub/f.txt");
+    assert!(out.contains("2000"), "got {:?}", out);
+}
+
+// chown missing file
+#[test]
+fn chown_missing_fails() {
+    let mut s = shell();
+    let (_, code, _) = s.run_line("chown 1000 nope.txt");
+    assert_ne!(code, 0);
+}
+
+#[test]
+fn ln_s_intermediate_symlink() {
+    // /link -> /dir, then cat /link/file.txt should work
+    let mut s = shell_with_files(serde_json::json!({"sub/file.txt": "content"}));
+    s.run_line("ln -s /home/u/sub link");
+    let (out, code, _) = s.run_line("cat link/file.txt");
+    assert_eq!(code, 0);
+    assert_eq!(out, "content");
+}
+
+#[test]
+fn chown_numeric_ids() {
+    let mut s = shell_with_files(serde_json::json!({"f.txt": "x"}));
+    let (_, code, _) = s.run_line("chown 2000:3000 f.txt");
+    assert_eq!(code, 0);
+    let (out, _, _) = s.run_line("stat f.txt");
+    assert!(out.contains("2000"), "got {:?}", out);
+    assert!(out.contains("3000"), "got {:?}", out);
+}
+
+#[test]
+fn mv_into_directory() {
+    let mut s = shell_with_files(serde_json::json!({"src.txt": "data"}));
+    s.run_line("mkdir dest");
+    let (_, code, _) = s.run_line("mv src.txt dest");
+    assert_eq!(code, 0);
+    let (out, c2, _) = s.run_line("cat dest/src.txt");
+    assert_eq!(c2, 0);
+    assert_eq!(out, "data");
+}
+
+#[test]
+fn tee_multiple_files() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("echo hello | tee a.txt b.txt");
+    assert_eq!(code, 0);
+    assert_eq!(out, "hello");
+    let (a, _, _) = s.run_line("cat a.txt");
+    let (b, _, _) = s.run_line("cat b.txt");
+    assert_eq!(a, "hello");
+    assert_eq!(b, "hello");
+}

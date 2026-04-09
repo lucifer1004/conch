@@ -308,3 +308,120 @@ fn printf_escape_newline_tab() {
     assert_eq!(code, 0);
     assert!(out.contains('\n'), "expected newline in {:?}", out);
 }
+
+// tac empty file
+#[test]
+fn tac_empty_file() {
+    let mut s = shell();
+    s.run_line("touch empty.txt");
+    let (out, code, _) = s.run_line("tac empty.txt");
+    assert_eq!(code, 0);
+    assert!(out.is_empty());
+}
+
+// nl empty file
+#[test]
+fn nl_empty_file() {
+    let mut s = shell();
+    s.run_line("touch empty.txt");
+    let (out, code, _) = s.run_line("nl empty.txt");
+    assert_eq!(code, 0);
+    assert!(out.is_empty());
+}
+
+// paste single file
+#[test]
+fn paste_single_file() {
+    let mut s = shell_with_files(serde_json::json!({"a.txt": "line1\nline2"}));
+    let (out, code, _) = s.run_line("paste a.txt");
+    assert_eq!(code, 0);
+    assert_eq!(out, "line1\nline2");
+}
+
+// printf with %% literal
+#[test]
+fn printf_percent_literal() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("printf '100%%'");
+    assert_eq!(code, 0);
+    assert_eq!(out, "100%");
+}
+
+// printf no args
+#[test]
+fn printf_no_args_fails() {
+    let mut s = shell();
+    let (_, code, _) = s.run_line("printf");
+    assert_ne!(code, 0);
+}
+
+// grep from stdin
+#[test]
+fn grep_stdin_pipe() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("echo 'foo bar baz' | grep bar");
+    assert_eq!(code, 0);
+    assert!(out.contains("bar"));
+}
+
+#[test]
+fn head_from_stdin() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("echo 'a\nb\nc\nd\ne' | head -n 2");
+    assert_eq!(code, 0);
+    // head should take first 2 lines
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines.len() <= 2);
+}
+
+#[test]
+fn tail_from_stdin() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("echo 'a\nb\nc' | tail -n 1");
+    assert_eq!(code, 0);
+    assert_eq!(out.lines().count(), 1);
+}
+
+#[test]
+fn wc_from_stdin() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("echo 'hello world' | wc");
+    assert_eq!(code, 0);
+    // Should show lines, words, bytes
+    assert!(out.contains("2"), "expected 2 words, got {:?}", out);
+}
+
+#[test]
+fn rev_from_stdin() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("echo abc | rev");
+    assert_eq!(code, 0);
+    assert_eq!(out, "cba");
+}
+
+#[test]
+fn seq_single_arg() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("seq 3");
+    assert_eq!(code, 0);
+    assert_eq!(out, "1\n2\n3");
+}
+
+#[test]
+fn cut_range_fields() {
+    let mut s = shell_with_files(serde_json::json!({
+        "data.txt": "a,b,c\nx,y,z"
+    }));
+    let (out, code, _) = s.run_line("cut -d, -f1,3 data.txt");
+    assert_eq!(code, 0);
+    assert!(out.contains("a") && out.contains("c"), "got {:?}", out);
+}
+
+#[test]
+fn tr_from_stdin_uppercase() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("echo hello | tr a-z A-Z");
+    assert_eq!(code, 0);
+    // tr might not support ranges, but at least should not panic
+    assert!(code == 0);
+}

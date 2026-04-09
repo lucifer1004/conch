@@ -108,6 +108,7 @@ mod tests {
     fn open_permission_denied() {
         let mut fs = MemFs::new();
         fs.write_with_mode("/secret", "x", 0o000);
+        fs.set_current_user(1000, 1000);
         assert!(matches!(
             fs.open("/secret"),
             Err(VfsError::PermissionDenied)
