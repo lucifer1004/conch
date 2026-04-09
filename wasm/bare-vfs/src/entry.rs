@@ -129,6 +129,11 @@ impl Entry {
         }
     }
 
+    /// Returns `true` if the file content is empty (or entry is a directory/symlink).
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Returns the Unix permission mode. Symlinks always report `0o777`.
     pub fn mode(&self) -> u16 {
         match self {
@@ -268,6 +273,11 @@ impl<'a> EntryRef<'a> {
             EntryRef::File { content, .. } => content.len(),
             EntryRef::Dir { .. } | EntryRef::Symlink { .. } => 0,
         }
+    }
+
+    /// Returns `true` if the file content is empty (or entry is a directory/symlink).
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     /// Returns the Unix permission mode. Symlinks always report `0o777`.

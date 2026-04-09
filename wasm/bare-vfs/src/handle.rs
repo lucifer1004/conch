@@ -151,7 +151,7 @@ mod tests {
         assert!(!h.is_empty());
         assert_eq!(h.position(), 0);
         let mut buf = [0u8; 2];
-        h.read(&mut buf).unwrap();
+        h.read_exact(&mut buf).unwrap();
         assert_eq!(h.position(), 2);
     }
 
