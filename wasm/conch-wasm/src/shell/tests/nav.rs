@@ -99,9 +99,10 @@ fn which_only_finds_builtins() {
 fn date_uses_config_env_date() {
     let c: Config = serde_json::from_value(serde_json::json!({
         "user": "u",
-        "hostname": "h",
-        "home": "/home/u",
-        "files": {},
+        "system": {
+            "hostname": "h",
+            "users": [{"name": "u", "home": "/home/u"}],
+        },
         "commands": [],
         "date": "Wed Apr  8 12:00:00 UTC 2026",
     }))

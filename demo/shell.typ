@@ -1,13 +1,15 @@
-#import "../lib.typ": terminal
+#import "../lib.typ": system, terminal
 
 #show: terminal.with(
   user: "demo",
-  hostname: "conch",
-  files: (
-    "hello.txt": "Hello, World!",
-    "data.csv": "name,age,city\nalice,30,paris\nbob,25,london\ncharlie,35,tokyo",
-    "src/main.rs": "fn main() {\n    println!(\"Hello from conch!\");\n}",
-    "README.md": "# Conch\nA shell simulator for Typst.\nPowered by Rust + WASM.",
+  system: system(
+    hostname: "conch",
+    files: (
+      "hello.txt": "Hello, World!",
+      "data.csv": "name,age,city\nalice,30,paris\nbob,25,london\ncharlie,35,tokyo",
+      "src/main.rs": "fn main() {\n    println!(\"Hello from conch!\");\n}",
+      "README.md": "# Conch\nA shell simulator for Typst.\nPowered by Rust + WASM.",
+    ),
   ),
 )
 

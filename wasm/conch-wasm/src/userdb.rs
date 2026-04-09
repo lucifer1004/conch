@@ -98,6 +98,11 @@ impl UserDb {
         uid
     }
 
+    /// Return the next available uid without consuming it.
+    pub fn next_available_uid(&self) -> u32 {
+        self.next_uid
+    }
+
     /// Add a group. Returns the gid.
     pub fn add_group(&mut self, name: &str) -> u32 {
         if let Some(&existing) = self.name_to_gid.get(name) {

@@ -26,17 +26,14 @@
   }
 }
 
-#let _execute-session(user, hostname, files, commands) = {
-  let home = "/home/" + user
+#let _execute-session(user, system, commands) = {
   let today = datetime.today()
   let date-str = today.display(
     "[weekday repr:short] [month repr:short] [day padding:space] 00:00:00 UTC [year]",
   )
   let config = json.encode((
     user: user,
-    hostname: hostname,
-    home: home,
-    files: files,
+    system: system,
     commands: commands,
     date: date-str,
   ))

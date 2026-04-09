@@ -3,6 +3,67 @@
 #import "session.typ": _execute-session, _parse-commands, _process-keyline
 #import "render.typ": _render-frame
 
+// --- System constructor ---
+
+/// Define a virtual system configuration.
+///
+/// ```typst
+/// #let sys = conch.system(
+///   hostname: "dev",
+///   users: ((name: "alice", groups: ("sudo",)), (name: "bob",)),
+///   files: ("hello.txt": "world"),
+/// )
+/// ```
+#let system(
+  hostname: "conch",
+  users: (),
+  groups: (),
+  files: (:),
+) = (
+  hostname: hostname,
+  users: users,
+  groups: groups,
+  files: files,
+)
+
+/// Resolve a system dict: if none provided, build a default one.
+#let _resolve-system(sys) = {
+  if sys == none {
+    system()
+  } else {
+    // Fill in defaults for missing keys
+    let defaults = system()
+    defaults + sys
+  }
+}
+
+// --- Public data function ---
+
+/// Execute commands and return raw session data without rendering.
+///
+/// Returns a dictionary with `entries` (array of command results) and
+/// `final-path` (the working directory after all commands).
+///
+/// Each entry contains: `user`, `hostname`, `path`, `command`, `output`,
+/// `exit-code`, and optionally `lang` (detected language for syntax highlighting).
+///
+/// ```typst
+/// #let result = execute(
+///   system: system(files: ("hello.txt": "world")),
+///   user: "alice",
+///   commands: ("whoami", "cat hello.txt"),
+/// )
+/// #result.entries.at(0).output // "alice"
+/// ```
+#let execute(
+  system: none,
+  user: "user",
+  commands: (),
+) = {
+  let sys = _resolve-system(system)
+  _execute-session(user, sys, commands)
+}
+
 // --- Public shell functions ---
 
 // Defaults for `hold` on animation entrypoints; callers may pass a partial dict (`defaults + hold`).
@@ -60,19 +121,19 @@
 /// ```
 #let terminal-frames(
   mode: "per-line",
+  system: none,
   user: "user",
-  hostname: "conch",
   theme: "dracula",
   font: auto,
   chrome: "macos",
   style: auto,
   width: auto,
   height: auto,
-  files: (:),
   show-cursor: true,
   overflow: "clip",
   commands: (),
 ) = {
+  let sys = _resolve-system(system)
   let theme = _resolve-theme(theme)
   let font = _resolve-font(font)
   let chrome = _resolve-chrome(chrome)
@@ -89,7 +150,7 @@
   let frame(session, typing, cursor-pos: none) = _render-frame(
     session,
     user,
-    hostname,
+    sys.hostname,
     theme,
     font,
     chrome,
@@ -107,27 +168,27 @@
   if mode == "per-line" {
     for i in range(run-cmds.len() + 1) {
       let executed = run-cmds.slice(0, i)
-      let session = _execute-session(user, hostname, files, executed)
+      let session = _execute-session(user, sys, executed)
       let typing = if i < run-cmds.len() { run-cmds.at(i) } else { last-cmd }
       frames += (frame(session, typing),)
     }
   } else if mode == "key-frames" {
     for i in range(run-cmds.len()) {
       // Pre-execution: command typed, not yet run
-      let pre-session = _execute-session(user, hostname, files, run-cmds.slice(
+      let pre-session = _execute-session(user, sys, run-cmds.slice(
         0,
         i,
       ))
       frames += (frame(pre-session, run-cmds.at(i)),)
       // Post-execution: output visible
-      let post-session = _execute-session(user, hostname, files, run-cmds.slice(
+      let post-session = _execute-session(user, sys, run-cmds.slice(
         0,
         i + 1,
       ))
       frames += (frame(post-session, ""),)
     }
     // Last command typed (not executed)
-    let final-session = _execute-session(user, hostname, files, run-cmds)
+    let final-session = _execute-session(user, sys, run-cmds)
     frames += (frame(final-session, last-cmd),)
   } else if mode == "per-char" {
     // Pre-process keylines
@@ -153,7 +214,7 @@
     for i in range(cmd-data.len()) {
       let info = cmd-data.at(i)
       let executed = exec-cmds.slice(0, i)
-      let session = _execute-session(user, hostname, files, executed)
+      let session = _execute-session(user, sys, executed)
 
       if info.states != none {
         for state in info.states {
@@ -170,7 +231,7 @@
       // Output frame
       let session-after = _execute-session(
         user,
-        hostname,
+        sys.hostname,
         files,
         exec-cmds.slice(0, i + 1),
       )
@@ -178,7 +239,7 @@
     }
 
     // Last command typing
-    let session-final = _execute-session(user, hostname, files, exec-cmds)
+    let session-final = _execute-session(user, sys, exec-cmds)
     if last-data.states != none {
       for state in last-data.states {
         frames += (frame(session-final, state.text, cursor-pos: state.cursor),)
@@ -208,20 +269,20 @@
 /// ````
 #let terminal-block(
   body,
+  system: none,
   user: "user",
-  hostname: "conch",
   theme: "dracula",
   font: auto,
   chrome: "macos",
   style: auto,
   width: auto,
   height: auto,
-  files: (:),
   show-cursor: true,
   overflow: "clip",
 ) = {
+  let sys = _resolve-system(system)
   let commands = _parse-commands(body)
-  let session = _execute-session(user, hostname, files, commands)
+  let session = _execute-session(user, sys, commands)
   let theme = _resolve-theme(theme)
   let font = _resolve-font(font)
   let chrome = _resolve-chrome(chrome)
@@ -231,7 +292,7 @@
   _render-frame(
     session,
     user,
-    hostname,
+    sys.hostname,
     theme,
     font,
     chrome,
@@ -248,30 +309,28 @@
 /// Sets page dimensions automatically.
 #let terminal(
   body,
+  system: none,
   user: "user",
-  hostname: "conch",
   theme: "dracula",
   font: auto,
   chrome: "macos",
   style: auto,
   width: auto,
   height: auto,
-  files: (:),
   show-cursor: true,
   overflow: "clip",
 ) = {
   set page(height: auto, width: auto, margin: 0.5in)
   terminal-block(
     body,
+    system: system,
     user: user,
-    hostname: hostname,
     theme: theme,
     font: font,
     chrome: chrome,
     style: style,
     width: width,
     height: height,
-    files: files,
     show-cursor: show-cursor,
     overflow: overflow,
   )
@@ -280,20 +339,20 @@
 /// Per-line animation: one frame per command execution.
 #let terminal-per-line(
   body,
+  system: none,
   user: "user",
-  hostname: "conch",
   theme: "dracula",
   font: auto,
   chrome: "macos",
   style: auto,
   width: auto,
   height: auto,
-  files: (:),
   overflow: "clip",
   /// Extra duplicate pages per animation step (PNG/GIF/video frame pacing). Pass a partial dict; merges with defaults, then `sys.inputs` (`conch_hold_after_frame`, …).
   hold: (:),
 ) = {
   set page(height: auto, width: auto, margin: 0.5in)
+  let sys = _resolve-system(system)
   let h = _hold-per-line-defaults + hold + _hold-input-patch-line()
   let commands = _parse-commands(body)
   let theme = _resolve-theme(theme)
@@ -307,12 +366,12 @@
 
   for i in range(run-cmds.len() + 1) {
     let executed = run-cmds.slice(0, i)
-    let session = _execute-session(user, hostname, files, executed)
+    let session = _execute-session(user, sys, executed)
     let typing = if i < run-cmds.len() { run-cmds.at(i) } else { last-cmd }
     _render-frame(
       session,
       user,
-      hostname,
+      sys.hostname,
       theme,
       font,
       chrome,
@@ -327,7 +386,7 @@
       _render-frame(
         session,
         user,
-        hostname,
+        sys.hostname,
         theme,
         font,
         chrome,
@@ -345,20 +404,20 @@
 /// Per-char animation: typing effect, one frame per keystroke.
 #let terminal-per-char(
   body,
+  system: none,
   user: "user",
-  hostname: "conch",
   theme: "dracula",
   font: auto,
   chrome: "macos",
   style: auto,
   width: auto,
   height: auto,
-  files: (:),
   overflow: "clip",
   /// Frame pacing for sequence/GIF export. Pass a partial dict; merges with defaults, then `sys.inputs` (`conch_hold_after_output`, …) so CLI can override.
   hold: (:),
 ) = {
   set page(height: auto, width: auto, margin: 0.5in)
+  let sys = _resolve-system(system)
   let h = _hold-per-char-defaults + hold + _hold-input-patch-char()
   let commands = _parse-commands(body)
   let theme = _resolve-theme(theme)
@@ -394,7 +453,7 @@
   for i in range(cmd-data.len()) {
     let info = cmd-data.at(i)
     let executed = exec-cmds.slice(0, i)
-    let session = _execute-session(user, hostname, files, executed)
+    let session = _execute-session(user, sys, executed)
 
     if info.states != none {
       // Keyline path: animate each buffer state with cursor position
@@ -404,7 +463,7 @@
         _render-frame(
           session,
           user,
-          hostname,
+          sys.hostname,
           theme,
           font,
           chrome,
@@ -426,7 +485,7 @@
         _render-frame(
           session,
           user,
-          hostname,
+          sys.hostname,
           theme,
           font,
           chrome,
@@ -440,14 +499,14 @@
     }
 
     pagebreak()
-    let session-after = _execute-session(user, hostname, files, exec-cmds.slice(
+    let session-after = _execute-session(user, sys, exec-cmds.slice(
       0,
       i + 1,
     ))
     _render-frame(
       session-after,
       user,
-      hostname,
+      sys.hostname,
       theme,
       font,
       chrome,
@@ -462,7 +521,7 @@
       _render-frame(
         session-after,
         user,
-        hostname,
+        sys.hostname,
         theme,
         font,
         chrome,
@@ -476,7 +535,7 @@
   }
 
   {
-    let session-final = _execute-session(user, hostname, files, exec-cmds)
+    let session-final = _execute-session(user, sys, exec-cmds)
 
     if last-data.states != none {
       for state in last-data.states {
@@ -484,7 +543,7 @@
         _render-frame(
           session-final,
           user,
-          hostname,
+          sys.hostname,
           theme,
           font,
           chrome,
@@ -504,7 +563,7 @@
         _render-frame(
           session-final,
           user,
-          hostname,
+          sys.hostname,
           theme,
           font,
           chrome,
@@ -529,7 +588,7 @@
       _render-frame(
         session-final,
         user,
-        hostname,
+        sys.hostname,
         theme,
         font,
         chrome,

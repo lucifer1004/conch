@@ -40,6 +40,8 @@ pub fn execute(input: &[u8]) -> Vec<u8> {
     let out = SessionOutput {
         entries,
         final_path: shell.display_path(),
+        final_user: shell.user.clone(),
+        final_hostname: shell.hostname.clone(),
     };
 
     serde_json::to_vec(&out).unwrap_or_default()
@@ -79,8 +81,26 @@ mod tests {
     }
 
     #[test]
+    fn execute_su_updates_final_user() {
+        let input = br#"{"user":"demo","system":{"hostname":"h","users":[{"name":"demo","home":"/home/demo"},{"name":"alice","home":"/home/alice"}]},"commands":["su alice"]}"#;
+        let raw = execute(input);
+        let v: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(v["final-user"].as_str(), Some("alice"));
+        assert_eq!(v["final-hostname"].as_str(), Some("h"));
+    }
+
+    #[test]
+    fn execute_final_user_unchanged_without_su() {
+        let input = br#"{"user":"demo","system":{"hostname":"h","users":[{"name":"demo","home":"/home/demo"}]},"commands":["echo hi"]}"#;
+        let raw = execute(input);
+        let v: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(v["final-user"].as_str(), Some("demo"));
+        assert_eq!(v["final-hostname"].as_str(), Some("h"));
+    }
+
+    #[test]
     fn execute_clear_drops_prior_entries() {
-        let input = br#"{"user":"u","hostname":"h","home":"/home/u","files":{},"commands":["echo first","clear","echo second"]}"#;
+        let input = br#"{"user":"u","system":{"hostname":"h","users":[{"name":"u","home":"/home/u"}]},"commands":["echo first","clear","echo second"]}"#;
         let raw = execute(input);
         let v: serde_json::Value = serde_json::from_slice(&raw).unwrap();
         let entries = v["entries"].as_array().unwrap();

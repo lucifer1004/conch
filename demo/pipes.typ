@@ -1,11 +1,13 @@
-#import "../lib.typ": terminal
+#import "../lib.typ": system, terminal
 
 #show: terminal.with(
   user: "demo",
-  hostname: "conch",
-  files: (
-    "names.txt": "charlie\nalice\nbob\nalice\ncharlie\ncharlie\nbob",
-    "log.txt": "INFO: server started\nERROR: connection lost\nINFO: reconnected\nWARN: slow query\nERROR: timeout\nINFO: recovered",
+  system: system(
+    hostname: "conch",
+    files: (
+      "names.txt": "charlie\nalice\nbob\nalice\ncharlie\ncharlie\nbob",
+      "log.txt": "INFO: server started\nERROR: connection lost\nINFO: reconnected\nWARN: slow query\nERROR: timeout\nINFO: recovered",
+    ),
   ),
 )
 

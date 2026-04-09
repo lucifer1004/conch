@@ -267,3 +267,17 @@ fn passwd_with_username() {
         out
     );
 }
+
+#[test]
+fn su_entry_shows_pre_switch_user() {
+    let mut s = shell();
+    s.run_line("useradd alice");
+    // The "su alice" entry should still show "u" (the pre-switch user)
+    let entry = s.execute("su alice");
+    assert_eq!(entry.user, "u", "su entry should show original user");
+    assert_eq!(entry.exit_code, 0);
+    // But the next entry shows "alice"
+    let entry2 = s.execute("whoami");
+    assert_eq!(entry2.user, "alice", "post-su entry should show new user");
+    assert_eq!(entry2.output, "alice");
+}

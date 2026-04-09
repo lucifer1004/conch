@@ -13,9 +13,11 @@ mod user;
 pub fn shell_with_files(files: serde_json::Value) -> Shell {
     let v = serde_json::json!({
         "user": "u",
-        "hostname": "h",
-        "home": "/home/u",
-        "files": files,
+        "system": {
+            "hostname": "h",
+            "users": [{"name": "u", "home": "/home/u"}],
+            "files": files,
+        },
         "commands": [],
     });
     let c: Config = serde_json::from_value(v).unwrap();

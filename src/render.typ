@@ -80,7 +80,12 @@
 
     // Final prompt
     {
-      _render-prompt-parts(user, hostname, session.final-path, theme)
+      _render-prompt-parts(
+        session.final-user,
+        session.final-hostname,
+        session.final-path,
+        theme,
+      )
       if typing != none {
         if cursor-pos != none {
           // Mid-line cursor: split text at cursor position
@@ -186,8 +191,8 @@
                 }
                 if is-last and final-fits {
                   _render-prompt-parts(
-                    user,
-                    hostname,
+                    session.final-user,
+                    session.final-hostname,
                     session.final-path,
                     theme,
                   )
@@ -216,7 +221,12 @@
               block(inset: style.inset, width: term-width, {
                 set text(..font, fill: theme.fg)
                 set par(leading: style.leading)
-                _render-prompt-parts(user, hostname, session.final-path, theme)
+                _render-prompt-parts(
+                  session.final-user,
+                  session.final-hostname,
+                  session.final-path,
+                  theme,
+                )
                 if typing != none { text(fill: theme.fg)[#typing] }
                 if show-cursor {
                   _cursor-cell(theme)

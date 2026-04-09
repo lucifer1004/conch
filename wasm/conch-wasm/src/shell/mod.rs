@@ -32,13 +32,101 @@ pub struct Shell {
 impl Shell {
     pub fn new(config: &Config) -> Self {
         let mut fs = MemFs::new();
-        let home = &config.home;
+        let mut users_db = UserDb::new();
+
+        // Resolve system config from either new `system` field or legacy flat fields
+        let hostname: String;
+        let home: String;
+
+        if let Some(ref sys) = config.system {
+            hostname = sys.hostname.clone();
+            // Find main user's home from user specs, or default
+            let main_spec = sys.users.iter().find(|u| u.name == config.user);
+            home = main_spec
+                .and_then(|s| s.home.clone())
+                .unwrap_or_else(|| format!("/home/{}", config.user));
+        } else {
+            // Legacy mode
+            hostname = config
+                .hostname
+                .clone()
+                .unwrap_or_else(|| "conch".to_string());
+            home = config
+                .home
+                .clone()
+                .unwrap_or_else(|| format!("/home/{}", config.user));
+        }
+
+        // 1. Create root
+        users_db.add_root();
+
+        // 2. Create main user
+        let main_uid;
+        let main_gid;
+        if let Some(ref sys) = config.system {
+            let main_spec = sys.users.iter().find(|u| u.name == config.user);
+            main_uid = main_spec.and_then(|s| s.uid).unwrap_or(1000);
+            main_gid = main_uid;
+        } else {
+            main_uid = 1000;
+            main_gid = 1000;
+        }
+        users_db.add_user_with_ids(&config.user, main_uid, main_gid, &home);
+
+        // 3. Create additional users and groups from system spec
+        if let Some(ref sys) = config.system {
+            for spec in &sys.users {
+                if spec.name == config.user {
+                    continue;
+                }
+                let uid = spec.uid.unwrap_or_else(|| users_db.next_available_uid());
+                let user_home = spec
+                    .home
+                    .clone()
+                    .unwrap_or_else(|| format!("/home/{}", spec.name));
+                users_db.add_user_with_ids(&spec.name, uid, uid, &user_home);
+                fs.create_dir_all(&user_home);
+            }
+
+            // 4. Create groups from group specs
+            for spec in &sys.groups {
+                if let Some(g) = spec.gid {
+                    users_db.add_group_with_id(&spec.name, g);
+                } else {
+                    users_db.add_group(&spec.name);
+                }
+                for member in &spec.members {
+                    users_db.add_user_to_group(member, &spec.name).ok();
+                }
+            }
+
+            // 5. Add users to groups specified in user specs
+            for spec in &sys.users {
+                for group_name in &spec.groups {
+                    if users_db.get_group_by_name(group_name).is_none() {
+                        users_db.add_group(group_name);
+                    }
+                    users_db.add_user_to_group(&spec.name, group_name).ok();
+                }
+            }
+        }
+
+        // Set current user
+        fs.set_current_user(main_uid, main_gid);
 
         // Create home hierarchy (root `/` is created by MemFs::new)
-        fs.create_dir_all(home);
+        fs.create_dir_all(&home);
+
+        // Resolve files to populate
+        let empty_files: BTreeMap<String, FileSpec> = BTreeMap::new();
+        let files = if let Some(ref sys) = config.system {
+            &sys.files
+        } else {
+            config.files.as_ref().unwrap_or(&empty_files)
+        };
 
         // Populate user-provided files
-        for (file_path, spec) in &config.files {
+        for (file_path, spec) in files {
             let full = if file_path.starts_with('/') {
                 file_path.clone()
             } else {
@@ -65,27 +153,22 @@ impl Shell {
         let mut env = BTreeMap::new();
         env.insert("HOME".to_string(), home.clone());
         env.insert("USER".to_string(), config.user.clone());
-        env.insert("HOSTNAME".to_string(), config.hostname.clone());
+        env.insert("HOSTNAME".to_string(), hostname.clone());
         env.insert("PWD".to_string(), home.clone());
         env.insert("SHELL".to_string(), "/bin/conch".to_string());
         if let Some(ref date) = config.date {
             env.insert("DATE".to_string(), date.clone());
         }
 
-        let mut users = UserDb::new();
-        users.add_root();
-        users.add_user_with_ids(&config.user, 1000, 1000, home);
-        fs.set_current_user(1000, 1000);
-
         Shell {
             fs,
             cwd: home.clone(),
             user: config.user.clone(),
-            hostname: config.hostname.clone(),
-            home: home.clone(),
+            hostname,
+            home,
             env,
             last_exit_code: 0,
-            users,
+            users: users_db,
         }
     }
 
@@ -186,24 +269,6 @@ impl Shell {
     }
 
     /// Build an output entry
-    pub fn entry(
-        &self,
-        path: String,
-        command: &str,
-        output: String,
-        exit_code: i32,
-    ) -> OutputEntry {
-        OutputEntry {
-            user: self.user.clone(),
-            hostname: self.hostname.clone(),
-            path,
-            command: command.to_string(),
-            output,
-            exit_code,
-            lang: None,
-        }
-    }
-
     /// Run a command line and return (output, exit_code, lang_hint).
     /// This is the core execution engine used by both interactive and script modes.
     pub fn run_line(&mut self, line: &str) -> (String, i32, Option<String>) {
@@ -246,10 +311,18 @@ impl Shell {
     /// Returns an OutputEntry for terminal display.
     pub fn execute(&mut self, line: &str) -> OutputEntry {
         let display = self.display_path();
+        let pre_user = self.user.clone();
+        let pre_hostname = self.hostname.clone();
         let (output, code, lang) = self.run_line(line);
-        let mut entry = self.entry(display, line, output, code);
-        entry.lang = lang;
-        entry
+        OutputEntry {
+            user: pre_user,
+            hostname: pre_hostname,
+            path: display,
+            command: line.to_string(),
+            output,
+            exit_code: code,
+            lang,
+        }
     }
 
     /// Execute a script file line by line, returning combined output.

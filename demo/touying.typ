@@ -4,7 +4,7 @@
 // Compile:  typst compile demo/touying.typ demo/touying.pdf --root .
 
 #import "@preview/touying:0.7.1": *
-#import "../lib.typ": terminal-block, terminal-frames
+#import "../lib.typ": system, terminal-block, terminal-frames
 
 #import themes.simple: (
   centered-slide, empty-slide, focus-slide, simple-theme, slide, title-slide,
@@ -28,10 +28,12 @@
 #slide[
   #terminal-block(
     user: "demo",
-    hostname: "conch",
+    system: system(
+      hostname: "conch",
+      files: ("hello.txt": "Hello from conch!"),
+    ),
     width: 480pt,
     height: 200pt,
-    files: ("hello.txt": "Hello from conch!"),
   )[```
   ls
   cat hello.txt
@@ -45,13 +47,15 @@
 #let line-frames = terminal-frames(
   mode: "per-line",
   user: "demo",
-  hostname: "conch",
+  system: system(
+    hostname: "conch",
+    files: (
+      "hello.txt": "Hello, World!",
+      "src/main.rs": "fn main() {\n    println!(\"hi\");\n}",
+    ),
+  ),
   width: 480pt,
   height: 200pt,
-  files: (
-    "hello.txt": "Hello, World!",
-    "src/main.rs": "fn main() {\n    println!(\"hi\");\n}",
-  ),
   commands: ("ls", "cat hello.txt", "cat src/main.rs", "echo done"),
 )
 
@@ -68,10 +72,12 @@
 #let key-frames = terminal-frames(
   mode: "key-frames",
   user: "demo",
-  hostname: "conch",
+  system: system(
+    hostname: "conch",
+    files: ("data.csv": "name,age\nalice,30\nbob,25"),
+  ),
   width: 480pt,
   height: 200pt,
-  files: ("data.csv": "name,age\nalice,30\nbob,25"),
   commands: ("ls", "cat data.csv", "echo done"),
 )
 

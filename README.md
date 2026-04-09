@@ -9,15 +9,17 @@ Type shell commands in your Typst document. Conch executes them against a virtua
 ## Quick Start
 
 ````typst
-#import "@preview/conch:0.1.0": terminal
+#import "@preview/conch:0.1.0": system, terminal
 
 #show: terminal.with(
-  user: "demo",
-  hostname: "conch",
-  files: (
-    "hello.txt": "Hello, World!",
-    "src/main.rs": "fn main() {\n    println!(\"hi\");\n}",
+  system: system(
+    hostname: "conch",
+    files: (
+      "hello.txt": "Hello, World!",
+      "src/main.rs": "fn main() {\n    println!(\"hi\");\n}",
+    ),
   ),
+  user: "demo",
 )
 
 ```
@@ -70,9 +72,12 @@ The full experience — execute commands, pipe output, write files, run scripts.
 **As a standalone page** (show rule — sets page dimensions automatically):
 
 ````typst
-#import "@preview/conch:0.1.0": terminal
+#import "@preview/conch:0.1.0": system, terminal
 
-#show: terminal.with(user: "dev", hostname: "conch", files: (:))
+#show: terminal.with(
+  system: system(),
+  user: "dev",
+)
 
 ```
 ls | grep ".rs" | wc -l
@@ -86,13 +91,16 @@ echo "done" > log.txt && cat log.txt
 **Embedded in a document** (no page side effects):
 
 ````typst
-#import "@preview/conch:0.1.0": terminal-block
+#import "@preview/conch:0.1.0": system, terminal-block
 
 = Build Log
 
-#terminal-block(user: "ci", files: (
-  "src/main.rs": "fn main() {}",
-))[```
+#terminal-block(
+  system: system(files: (
+    "src/main.rs": "fn main() {}",
+  )),
+  user: "ci",
+)[```
 ls
 cat src/main.rs
 echo "Build complete"
@@ -103,13 +111,18 @@ Use `terminal` for standalone terminal documents and screenshots. Use `terminal-
 
 ## Supported Commands
 
-| Category       | Commands                                                                                                                                                |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Filesystem** | `ls` (`-la`), `cat` (`-n`), `mkdir` (`-p`), `touch`, `rm` (`-rf`), `cp`, `mv`, `find` (`-name`, `-type`), `tee` (`-a`), `chmod`, `basename`, `dirname`  |
-| **Text**       | `echo` (`-e`, `-n`), `head` (`-n`), `tail` (`-n`), `wc`, `grep` (`-invc`), `sort` (`-rn`), `uniq` (`-c`), `cut` (`-d`, `-f`), `tr` (`-d`), `rev`, `seq` |
-| **Navigation** | `cd`, `pwd`, `tree`, `whoami`, `hostname`, `date`, `which`, `type`, `env`, `printenv`, `export`                                                         |
-| **Scripting**  | `bash`/`sh` (run script files), `./script.sh` (execute with permission check)                                                                           |
-| **Builtins**   | `clear`, `true`, `false`                                                                                                                                |
+69 commands across 8 categories:
+
+| Category       | Commands                                                                                                                                                                                       |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Filesystem** | `ls` (`-la`), `cat` (`-n`), `mkdir` (`-p`), `rmdir`, `touch`, `mktemp` (`-d`), `rm` (`-rf`), `cp`, `mv`, `ln` (`-s`), `readlink`, `find` (`-name`, `-type`), `tee` (`-a`), `chmod`             |
+| **Text**       | `echo` (`-e`, `-n`), `printf`, `head` (`-n`), `tail` (`-n`), `wc`, `grep` (`-invc`), `sort` (`-rn`), `uniq` (`-c`), `cut` (`-d`, `-f`), `tr` (`-d`), `rev`, `seq`, `tac`, `nl`, `paste` (`-d`) |
+| **Transform**  | `sed` (`s///`, `s///g`, `-i`), `diff`, `xxd`, `base64` (`-d`)                                                                                                                                  |
+| **Inspect**    | `stat`, `test`/`[` (`-efdrwxs`, `=`, `!=`, `-eq`/`-ne`/`-lt`/`-gt`), `du` (`-sh`), `tree`                                                                                                      |
+| **Navigation** | `cd`, `pwd`, `basename`, `dirname`, `realpath`, `whoami`, `hostname`, `date`, `which`, `type`, `env`, `printenv`, `export`                                                                     |
+| **User mgmt**  | `useradd`/`adduser`, `groupadd`/`addgroup`, `userdel`/`deluser`, `usermod` (`-aG`), `su` (`-`), `sudo`, `passwd`, `chown` (`-R`), `chgrp` (`-R`), `id`, `groups`                               |
+| **Scripting**  | `bash`/`sh`, `./script.sh`                                                                                                                                                                     |
+| **Builtins**   | `clear`, `true`, `false`                                                                                                                                                                       |
 
 ## Shell Features
 
@@ -171,9 +184,11 @@ echo "it's a \"test\""     # backslash escapes
 ### Inline Files
 
 ```typst
-files: (
-  "hello.txt": "Hello, World!",
-  "src/main.rs": "fn main() {}",
+#let sys = system(
+  files: (
+    "hello.txt": "Hello, World!",
+    "src/main.rs": "fn main() {}",
+  ),
 )
 ```
 
@@ -182,9 +197,11 @@ files: (
 Read actual project files using Typst's `read()`:
 
 ```typst
-files: (
-  "src/main.rs": read("src/main.rs"),
-  "README.md": read("README.md"),
+#let sys = system(
+  files: (
+    "src/main.rs": read("src/main.rs"),
+    "README.md": read("README.md"),
+  ),
 )
 ```
 
@@ -193,10 +210,12 @@ files: (
 Set Unix-style permissions. Default: `644` for files, `755` for directories. Read and write operations are enforced — `cat` on an unreadable file or `>` redirect to a read-only file returns "Permission denied", just like a real shell.
 
 ```typst
-files: (
-  "secret.txt": (content: "top secret data", mode: 000),
-  "readonly.txt": (content: "do not modify", mode: 444),
-  "setup.sh": (content: "#!/bin/bash\necho 'Ready!'", mode: 644),
+#let sys = system(
+  files: (
+    "secret.txt": (content: "top secret data", mode: 000),
+    "readonly.txt": (content: "do not modify", mode: 444),
+    "setup.sh": (content: "#!/bin/bash\necho 'Ready!'", mode: 644),
+  ),
 )
 ```
 
@@ -209,6 +228,26 @@ chmod 755 setup.sh
 
 ![File permissions and access control](./demo/permissions.png)
 
+## Users & Groups
+
+Define users and groups within the virtual system:
+
+```typst
+#let sys = system(
+  hostname: "dev",
+  users: (
+    (name: "alice", groups: ("sudo",)),
+    (name: "bob"),
+  ),
+  groups: (
+    (name: "docker", members: ("alice",)),
+  ),
+  files: (:),
+)
+```
+
+Users can run commands with `su` to switch identity, and group membership affects `sudo` permissions and file access control. Use `usermod`, `useradd`, `groupadd` commands at runtime to modify users and groups.
+
 ## Script Execution
 
 Create executable scripts and run them:
@@ -216,8 +255,10 @@ Create executable scripts and run them:
 ![Running a shell script](./demo/script.png)
 
 ```typst
-files: (
-  "deploy.sh": (content: "#!/bin/bash\nmkdir -p dist\necho 'built' > dist/status\necho 'Deploy complete!'", mode: 755),
+#let sys = system(
+  files: (
+    "deploy.sh": (content: "#!/bin/bash\nmkdir -p dist\necho 'built' > dist/status\necho 'Deploy complete!'", mode: 755),
+  ),
 )
 ```
 
@@ -258,8 +299,8 @@ Six built-in themes, each with matching ANSI color palettes:
 ![Built-in themes](./demo/themes.png)
 
 ```typst
-#import "@preview/conch:0.1.0": terminal
-#show: terminal.with(theme: "retro")
+#import "@preview/conch:0.1.0": system, terminal
+#show: terminal.with(system: system(), theme: "retro", user: "demo")
 ```
 
 ### Custom Themes
@@ -267,7 +308,10 @@ Six built-in themes, each with matching ANSI color palettes:
 Pass a dictionary instead of a name:
 
 ```typst
+#import "@preview/conch:0.1.0": system, terminal
 #show: terminal.with(
+  system: system(),
+  user: "demo",
   theme: (
     bg: rgb("#1a1b26"), fg: rgb("#c0caf5"),
     prompt-user: rgb("#9ece6a"), prompt-path: rgb("#7aa2f7"), prompt-sym: rgb("#c0caf5"),
@@ -288,7 +332,8 @@ Pass a dictionary instead of a name:
 Five built-in window decoration styles. Chrome and theme are independent — mix any chrome with any color theme.
 
 ```typst
-#show: terminal.with(chrome: "windows", theme: "dracula")
+#import "@preview/conch:0.1.0": system, terminal
+#show: terminal.with(system: system(), user: "demo", chrome: "windows", theme: "dracula")
 ```
 
 `macos` (default), `windows`, `windows-terminal`, `gnome`, `plain`
@@ -312,20 +357,26 @@ Available on all functions: `terminal`, `terminal-block`, `terminal-frame`, `ter
 The `font` parameter accepts a dictionary of Typst [`text()`](https://typst.app/docs/reference/text/text/) properties. Only specify what you want to change — unset keys use the defaults (JetBrains Mono, 9pt).
 
 ```typst
+#import "@preview/conch:0.1.0": system, terminal
+
 // Change size only
-#show: terminal.with(font: (size: 12pt))
+#show: terminal.with(system: system(), user: "demo", font: (size: 12pt))
 
 // Change family
-#show: terminal.with(font: (font: ("Fira Code",)))
+#show: terminal.with(system: system(), user: "demo", font: (font: ("Fira Code",)))
 
 // Full customization — any text() property works
-#show: terminal.with(font: (
-  font: ("IBM Plex Mono",),
-  size: 11pt,
-  weight: "bold",
-  ligatures: false,
-  tracking: 0.5pt,
-))
+#show: terminal.with(
+  system: system(),
+  user: "demo",
+  font: (
+    font: ("IBM Plex Mono",),
+    size: 11pt,
+    weight: "bold",
+    ligatures: false,
+    tracking: 0.5pt,
+  ),
+)
 ```
 
 Available on all functions: `terminal`, `terminal-block`, `terminal-frame`, `terminal-per-line`, `terminal-per-char`.
@@ -335,14 +386,20 @@ Available on all functions: `terminal`, `terminal-block`, `terminal-frame`, `ter
 The `style` parameter controls layout spacing. Override any key — unset keys use defaults.
 
 ```typst
+#import "@preview/conch:0.1.0": system, terminal
+
 // Tighter body padding
-#show: terminal.with(style: (inset: (x: 8pt, y: 4pt)))
+#show: terminal.with(system: system(), user: "demo", style: (inset: (x: 8pt, y: 4pt)))
 
 // Wider line spacing
-#show: terminal.with(style: (leading: 0.6em))
+#show: terminal.with(system: system(), user: "demo", style: (leading: 0.6em))
 
 // Both
-#show: terminal.with(style: (inset: (x: 16pt, y: 8pt), leading: 0.5em))
+#show: terminal.with(
+  system: system(),
+  user: "demo",
+  style: (inset: (x: 16pt, y: 8pt), leading: 0.5em)
+)
 ```
 
 | Key       | Default             | Description                            |
@@ -361,11 +418,13 @@ Generate frames for GIF creation. Each page = one animation frame.
 One frame per command execution:
 
 ````typst
-#import "@preview/conch:0.1.0": terminal-per-line
+#import "@preview/conch:0.1.0": system, terminal-per-line
 
 #terminal-per-line(
-  user: "demo", height: 350pt, width: 560pt,
-  files: (:),
+  system: system(),
+  user: "demo",
+  height: 350pt,
+  width: 560pt,
 )[```
 ls
 cat hello.txt
@@ -378,11 +437,13 @@ echo "done"
 Typing effect — one frame per keystroke:
 
 ````typst
-#import "@preview/conch:0.1.0": terminal-per-char
+#import "@preview/conch:0.1.0": system, terminal-per-char
 
 #terminal-per-char(
-  user: "demo", height: 350pt, width: 560pt,
-  files: (:),
+  system: system(),
+  user: "demo",
+  height: 350pt,
+  width: 560pt,
 )[```
 ls
 cat hello.txt
@@ -412,9 +473,11 @@ Simulate typing corrections and cursor movement in per-char animations using `\x
 Example — backspace correction and mid-line cursor editing:
 
 ````typst
+#import "@preview/conch:0.1.0": system, terminal-per-char
+
 #terminal-per-char(
+  system: system(files: ("hello.txt": "Hello!")),
   user: "demo",
-  files: ("hello.txt": "Hello!"),
 )[```
 cat helo\x7flo.txt
 eco\x1b[Dh\x1b[F "done"
@@ -428,10 +491,13 @@ The first line types `cat helo`, backspaces the `o`, then types `lo.txt` — exe
 Control how many duplicate pages are emitted at key moments — useful for GIF/video timing:
 
 ````typst
+#import "@preview/conch:0.1.0": system, terminal-per-char, terminal-per-line
+
 // Per-char: hold 20 extra frames at the end, with cursor blinking
 #terminal-per-char(
+  system: system(),
+  user: "demo",
   hold: (after-final: 20, final-cursor-blink: true, final-blink-hold: 3),
-  ...
 )[```
 ls
 echo "done"
@@ -439,8 +505,9 @@ echo "done"
 
 // Per-line: hold 5 extra frames after each command
 #terminal-per-line(
+  system: system(),
+  user: "demo",
   hold: (after-frame: 5),
-  ...
 )[```
 ls
 echo "done"
@@ -511,16 +578,19 @@ Set `height` for consistent frame sizes. Content scrolls like a real terminal �
 When a fixed-height terminal overflows, set `overflow: "paginate"` to automatically continue onto new pages instead of clipping old lines. Each page renders a complete terminal window.
 
 ````typst
-#import "@preview/conch:0.1.0": terminal
+#import "@preview/conch:0.1.0": system, terminal
 
 #show: terminal.with(
+  system: system(
+    files: (
+      "hello.txt": "Hello, World!",
+      "data.csv": "name,age,city\nalice,30,paris\nbob,25,london",
+      "src/main.rs": "fn main() {\n    println!(\"Hello!\");\n}",
+    ),
+  ),
+  user: "demo",
   height: 300pt,
   overflow: "paginate",
-  files: (
-    "hello.txt": "Hello, World!",
-    "data.csv": "name,age,city\nalice,30,paris\nbob,25,london",
-    "src/main.rs": "fn main() {\n    println!(\"Hello!\");\n}",
-  ),
 )
 
 ```
@@ -546,15 +616,16 @@ Use `terminal-frames()` to generate an array of frame content for slide framewor
 
 ```typst
 #import "@preview/touying:0.7.1": *
-#import "@preview/conch:0.1.0": terminal-frames
+#import "@preview/conch:0.1.0": system, terminal-frames
 
 #import themes.simple: simple-theme, slide, title-slide
 #show: simple-theme.with(aspect-ratio: "16-9")
 
 #let frames = terminal-frames(
   mode: "per-line",  // or "key-frames", "per-char"
+  system: system(files: ("hello.txt": "Hello!")),
+  user: "demo",
   commands: ("ls", "cat hello.txt", "echo done"),
-  files: ("hello.txt": "Hello!"),
   width: 480pt,
   height: 200pt,
 )
@@ -573,24 +644,52 @@ Use `terminal-frames()` to generate an array of frame content for slide framewor
 
 See `demo/touying.typ` for a full working example.
 
+## Raw Execution
+
+Execute commands and retrieve raw session data without rendering. Useful for programmatic access to command output and exit codes.
+
+```typst
+#import "@preview/conch:0.1.0": execute, system
+
+#let result = execute(
+  system: system(files: ("hello.txt": "world")),
+  user: "alice",
+  commands: ("whoami", "cat hello.txt"),
+)
+
+// Access raw output data
+#result.entries.at(0).output  // "alice"
+#result.entries.at(1).output  // "world"
+#result.entries.at(0).exit-code  // 0
+```
+
+The `execute()` function returns a dictionary with:
+
+- `entries`: array of command results, each with `user`, `hostname`, `path`, `command`, `output`, `exit-code`, and optionally `lang` (detected language for syntax highlighting)
+- `final-path`: the working directory after all commands
+
 ## API Reference
 
 ### Functions
 
-| Function                                                                                                            | Description                                                                                                                       |
-| ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `terminal-frame(body, title, theme, font, chrome, style, width, height)`                                            | Themed terminal window chrome                                                                                                     |
-| `render-ansi(body, theme)`                                                                                          | ANSI escape sequence renderer                                                                                                     |
-| `terminal(body, user, hostname, theme, font, chrome, width, height, files, show-cursor, overflow)`                  | Standalone page shell simulator (show rule; sets page dimensions)                                                                 |
-| `terminal-block(body, user, hostname, theme, font, chrome, width, height, files, show-cursor, overflow)`            | Embeddable shell simulator (no page settings; composable with other content)                                                      |
-| `terminal-per-line(body, user, hostname, theme, font, chrome, width, height, files, overflow, hold)`                | Per-command animation frames; `hold` sets extra duplicate pages per step (`after-frame`)                                          |
-| `terminal-per-char(body, user, hostname, theme, font, chrome, width, height, files, overflow, hold)`                | Per-keystroke animation frames; `hold` sets tail pacing (`after-output`, `after-final`, `final-cursor-blink`, `final-blink-hold`) |
-| `terminal-frames(mode, user, hostname, theme, font, chrome, width, height, files, show-cursor, overflow, commands)` | Returns array of frame content; `mode`: `"per-line"`, `"per-char"`, `"key-frames"`                                                |
+| Function                                                                                                   | Description                                                                                                                       |
+| ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `system(hostname, users, groups, files)`                                                                   | Define a virtual system configuration                                                                                             |
+| `execute(system, user, commands)`                                                                          | Execute commands and return raw session data (no rendering)                                                                       |
+| `terminal-frame(body, title, theme, font, chrome, style, width, height)`                                   | Themed terminal window chrome                                                                                                     |
+| `render-ansi(body, theme)`                                                                                 | ANSI escape sequence renderer                                                                                                     |
+| `terminal(body, system, user, theme, font, chrome, width, height, show-cursor, overflow)`                  | Standalone page shell simulator (show rule; sets page dimensions)                                                                 |
+| `terminal-block(body, system, user, theme, font, chrome, width, height, show-cursor, overflow)`            | Embeddable shell simulator (no page settings; composable with other content)                                                      |
+| `terminal-per-line(body, system, user, theme, font, chrome, width, height, overflow, hold)`                | Per-command animation frames; `hold` sets extra duplicate pages per step (`after-frame`)                                          |
+| `terminal-per-char(body, system, user, theme, font, chrome, width, height, overflow, hold)`                | Per-keystroke animation frames; `hold` sets tail pacing (`after-output`, `after-final`, `final-cursor-blink`, `final-blink-hold`) |
+| `terminal-frames(mode, system, user, theme, font, chrome, width, height, show-cursor, overflow, commands)` | Returns array of frame content; `mode`: `"per-line"`, `"per-char"`, `"key-frames"`                                                |
 
 ### Exports
 
 ```typst
 #import "@preview/conch:0.1.0": (
+  system,             // virtual system constructor
+  execute,            // raw command execution (no rendering)
   terminal,           // standalone page shell (show rule)
   terminal-block,     // embeddable shell block
   terminal-frames,    // frame array for slide frameworks
