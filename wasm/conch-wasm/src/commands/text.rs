@@ -70,12 +70,8 @@ impl Shell {
         let mut out = Vec::new();
         for arg in &file_args {
             let path = self.resolve(arg);
-            match self.fs.get(&path) {
-                Some(e) if e.is_file() && !e.is_readable() => {
-                    return (format!("wc: {}: Permission denied", arg), 1)
-                }
-                Some(e) if e.is_file() => {
-                    let c = e.content().unwrap();
+            match self.fs.read_to_string(&path) {
+                Ok(c) => {
                     out.push(format!(
                         "  {}  {}  {} {}",
                         c.lines().count(),
@@ -84,8 +80,7 @@ impl Shell {
                         arg
                     ));
                 }
-                Some(_) => return (format!("wc: {}: Is a directory", arg), 1),
-                None => return (format!("wc: {}: No such file or directory", arg), 1),
+                Err(e) => return (format!("wc: {}: {}", arg, e), 1),
             }
         }
         (out.join("\n"), 0)
@@ -152,13 +147,9 @@ impl Shell {
 
         for file in files {
             let path = self.resolve(file);
-            let content = match self.fs.get(&path) {
-                Some(e) if e.is_file() && !e.is_readable() => {
-                    return (format!("grep: {}: Permission denied", file), 2)
-                }
-                Some(e) if e.is_file() => e.content().unwrap(),
-                Some(_) => return (format!("grep: {}: Is a directory", file), 2),
-                None => return (format!("grep: {}: No such file or directory", file), 2),
+            let content = match self.fs.read_to_string(&path) {
+                Ok(c) => c,
+                Err(e) => return (format!("grep: {}: {}", file, e), 2),
             };
             let prefix = if multi { Some(file.as_str()) } else { None };
             let (out, code) = self.grep_content(
@@ -457,14 +448,10 @@ impl Shell {
         match file {
             Some(f) => {
                 let path = self.resolve(f);
-                match self.fs.get(&path) {
-                    Some(e) if e.is_file() && !e.is_readable() => {
-                        Err(format!("{}: Permission denied", f))
-                    }
-                    Some(e) if e.is_file() => Ok(e.content().unwrap().to_string()),
-                    Some(_) => Err(format!("{}: Is a directory", f)),
-                    None => Err(format!("{}: No such file or directory", f)),
-                }
+                self.fs
+                    .read_to_string(&path)
+                    .map(|s| s.to_string())
+                    .map_err(|e| format!("{}: {}", f, e))
             }
             None => Ok(stdin.unwrap_or("").to_string()),
         }
@@ -496,20 +483,12 @@ impl Shell {
         cmd_name: &str,
     ) -> (String, i32) {
         let path = self.resolve(filename);
-        match self.fs.get(&path) {
-            Some(e) if e.is_file() && !e.is_readable() => {
-                (format!("{}: {}: Permission denied", cmd_name, filename), 1)
-            }
-            Some(e) if e.is_file() => {
-                let c = e.content().unwrap();
+        match self.fs.read_to_string(&path) {
+            Ok(c) => {
                 let lines: Vec<&str> = c.lines().collect();
                 (transform(&lines).join("\n"), 0)
             }
-            Some(_) => (format!("{}: {}: Is a directory", cmd_name, filename), 1),
-            None => (
-                format!("{}: {}: No such file or directory", cmd_name, filename),
-                1,
-            ),
+            Err(e) => (format!("{}: {}: {}", cmd_name, filename, e), 1),
         }
     }
 }

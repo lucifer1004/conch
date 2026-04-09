@@ -101,13 +101,9 @@ impl Shell {
             return ("bash: missing script file".into(), 1);
         }
         let path = self.resolve(&args[0]);
-        let script = match self.fs.get(&path) {
-            Some(e) if e.is_file() && !e.is_readable() => {
-                return (format!("bash: {}: Permission denied", args[0]), 1)
-            }
-            Some(e) if e.is_file() => e.content().unwrap().to_string(),
-            Some(_) => return (format!("bash: {}: Is a directory", args[0]), 1),
-            None => return (format!("bash: {}: No such file or directory", args[0]), 1),
+        let script = match self.fs.read_to_string(&path) {
+            Ok(s) => s.to_string(),
+            Err(e) => return (format!("bash: {}: {}", args[0], e), 1),
         };
         self.run_script(&script)
     }
@@ -116,18 +112,21 @@ impl Shell {
     /// Requires the file to have execute permission.
     pub fn cmd_exec(&mut self, cmd: &str, _args: &[String]) -> (String, i32) {
         let path = self.resolve(cmd);
-        let (script, mode) = match self.fs.get(&path) {
-            Some(e) if e.is_file() && !e.is_readable() => {
-                return (format!("conch: {}: Permission denied", cmd), 126)
-            }
-            Some(e) if e.is_file() => (e.content().unwrap().to_string(), e.mode()),
-            Some(_) => return (format!("conch: {}: Is a directory", cmd), 126),
-            None => return (format!("conch: {}: No such file or directory", cmd), 127),
+        let meta = match self.fs.metadata(&path) {
+            Ok(m) if m.is_dir() => return (format!("conch: {}: Is a directory", cmd), 126),
+            Ok(m) => m,
+            Err(_) => return (format!("conch: {}: No such file or directory", cmd), 127),
         };
-        // Check execute permission (any execute bit)
-        if mode & 0o111 == 0 {
+        if !meta.is_readable() {
             return (format!("conch: {}: Permission denied", cmd), 126);
         }
+        if !meta.is_executable() {
+            return (format!("conch: {}: Permission denied", cmd), 126);
+        }
+        let script = match self.fs.read_to_string(&path) {
+            Ok(s) => s.to_string(),
+            Err(e) => return (format!("conch: {}: {}", cmd, e), 126),
+        };
         self.run_script(&script)
     }
 

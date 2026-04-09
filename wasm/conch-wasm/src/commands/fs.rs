@@ -87,15 +87,9 @@ impl Shell {
             let mut parts = Vec::new();
             for arg in &file_args {
                 let path = self.resolve(arg);
-                match self.fs.get(&path) {
-                    Some(e) if e.is_file() && !e.is_readable() => {
-                        return (format!("cat: {}: Permission denied", arg), 1, None)
-                    }
-                    Some(e) if e.is_file() => parts.push(e.content().unwrap().to_string()),
-                    Some(e) if e.is_dir() => {
-                        return (format!("cat: {}: Is a directory", arg), 1, None)
-                    }
-                    _ => return (format!("cat: {}: No such file or directory", arg), 1, None),
+                match self.fs.read_to_string(&path) {
+                    Ok(s) => parts.push(s.to_string()),
+                    Err(e) => return (format!("cat: {}: {}", arg, e), 1, None),
                 }
             }
             parts.join("\n")
@@ -232,18 +226,16 @@ impl Shell {
         let src_path = self.resolve(files[0]);
         let dst_path = self.resolve(files[1]);
 
-        let content = match self.fs.get(&src_path) {
-            Some(e) if e.is_file() && !e.is_readable() => {
-                return (format!("cp: '{}': Permission denied", files[0]), 1)
-            }
-            Some(e) if e.is_file() => e.content().unwrap().to_string(),
-            Some(e) if e.is_dir() => return ("cp: omitting directory".into(), 1),
-            _ => {
+        let content = match self.fs.read_to_string(&src_path) {
+            Ok(s) => s.to_string(),
+            Err(bare_vfs::VfsError::IsADirectory) => return ("cp: omitting directory".into(), 1),
+            Err(bare_vfs::VfsError::NotFound) => {
                 return (
                     format!("cp: cannot stat '{}': No such file or directory", files[0]),
                     1,
                 )
             }
+            Err(_) => return (format!("cp: '{}': Permission denied", files[0]), 1),
         };
 
         let target = match self.fs.get(&dst_path) {
@@ -370,10 +362,11 @@ impl Shell {
                 }
             }
             if append {
-                let existing = match self.fs.get(&path) {
-                    Some(e) if e.is_file() => e.content().unwrap().to_string(),
-                    _ => String::new(),
-                };
+                let existing = self
+                    .fs
+                    .read_to_string(&path)
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
                 let content = if existing.is_empty() {
                     input.clone()
                 } else {

@@ -322,10 +322,11 @@ impl Shell {
                     self.fs.insert(target, FsEntry::file(output));
                 }
                 crate::parser::RedirectType::Append => {
-                    let existing = match self.fs.get(&target) {
-                        Some(e) if e.is_file() => e.content().unwrap().to_string(),
-                        _ => String::new(),
-                    };
+                    let existing = self
+                        .fs
+                        .read_to_string(&target)
+                        .map(|s| s.to_string())
+                        .unwrap_or_default();
                     let appended = if existing.is_empty() {
                         output
                     } else {
