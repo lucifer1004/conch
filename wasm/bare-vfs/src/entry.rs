@@ -107,6 +107,76 @@ impl Entry {
     }
 }
 
+/// A borrowed view of a filesystem entry, returned by [`crate::MemFs::get`].
+///
+/// Like [`Entry`] but borrows file content instead of owning it.
+#[derive(Debug, Clone, Copy)]
+pub enum EntryRef<'a> {
+    /// A regular file.
+    File { content: &'a [u8], mode: u16 },
+    /// A directory.
+    Dir { mode: u16 },
+}
+
+impl<'a> EntryRef<'a> {
+    /// Returns `true` if this entry is a directory.
+    pub fn is_dir(&self) -> bool {
+        matches!(self, EntryRef::Dir { .. })
+    }
+
+    /// Returns `true` if this entry is a file.
+    pub fn is_file(&self) -> bool {
+        matches!(self, EntryRef::File { .. })
+    }
+
+    /// Returns the raw file content as bytes, or `None` for directories.
+    pub fn content(&self) -> Option<&'a [u8]> {
+        match self {
+            EntryRef::File { content, .. } => Some(content),
+            EntryRef::Dir { .. } => None,
+        }
+    }
+
+    /// Returns the file content as a UTF-8 string, or `None` for directories
+    /// or files with invalid UTF-8.
+    pub fn content_str(&self) -> Option<&'a str> {
+        match self {
+            EntryRef::File { content, .. } => core::str::from_utf8(content).ok(),
+            EntryRef::Dir { .. } => None,
+        }
+    }
+
+    /// Returns the size of the file content in bytes, or 0 for directories.
+    pub fn len(&self) -> usize {
+        match self {
+            EntryRef::File { content, .. } => content.len(),
+            EntryRef::Dir { .. } => 0,
+        }
+    }
+
+    /// Returns the Unix permission mode.
+    pub fn mode(&self) -> u16 {
+        match self {
+            EntryRef::File { mode, .. } | EntryRef::Dir { mode, .. } => *mode,
+        }
+    }
+
+    /// Returns `true` if the owner read bit is set.
+    pub fn is_readable(&self) -> bool {
+        self.mode() & 0o400 != 0
+    }
+
+    /// Returns `true` if the owner write bit is set.
+    pub fn is_writable(&self) -> bool {
+        self.mode() & 0o200 != 0
+    }
+
+    /// Returns `true` if any execute bit is set.
+    pub fn is_executable(&self) -> bool {
+        self.mode() & 0o111 != 0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,5 +249,61 @@ mod tests {
         assert_eq!(Entry::format_mode(0o777), "rwxrwxrwx");
         assert_eq!(Entry::format_mode(0o100), "--x------");
         assert_eq!(Entry::format_mode(0o421), "r---w---x");
+    }
+
+    // -- EntryRef tests -----------------------------------------------------
+
+    #[test]
+    fn entry_ref_file() {
+        let data = vec![104, 101, 108, 108, 111]; // "hello"
+        let r = EntryRef::File {
+            content: &data,
+            mode: 0o755,
+        };
+        assert!(r.is_file());
+        assert!(!r.is_dir());
+        assert_eq!(r.content(), Some(b"hello".as_slice()));
+        assert_eq!(r.content_str(), Some("hello"));
+        assert_eq!(r.len(), 5);
+        assert_eq!(r.mode(), 0o755);
+        assert!(r.is_readable());
+        assert!(r.is_writable());
+        assert!(r.is_executable());
+    }
+
+    #[test]
+    fn entry_ref_dir() {
+        let r = EntryRef::Dir { mode: 0o500 };
+        assert!(r.is_dir());
+        assert!(!r.is_file());
+        assert_eq!(r.content(), None);
+        assert_eq!(r.content_str(), None);
+        assert_eq!(r.len(), 0);
+        assert_eq!(r.mode(), 0o500);
+        assert!(r.is_readable());
+        assert!(!r.is_writable());
+        assert!(r.is_executable());
+    }
+
+    #[test]
+    fn entry_ref_binary_content_str_is_none() {
+        let data = vec![0u8, 0xFF];
+        let r = EntryRef::File {
+            content: &data,
+            mode: 0o644,
+        };
+        assert_eq!(r.content(), Some([0u8, 0xFF].as_slice()));
+        assert_eq!(r.content_str(), None);
+    }
+
+    #[test]
+    fn entry_ref_zero_mode() {
+        let r = EntryRef::File {
+            content: b"x",
+            mode: 0o000,
+        };
+        assert!(!r.is_readable());
+        assert!(!r.is_writable());
+        assert!(!r.is_executable());
     }
 }

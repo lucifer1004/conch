@@ -35,7 +35,7 @@ mod metadata;
 mod path;
 
 pub use dir::DirEntry;
-pub use entry::Entry;
+pub use entry::{Entry, EntryRef};
 pub use error::VfsError;
 pub use fs::MemFs;
 #[cfg(feature = "std")]

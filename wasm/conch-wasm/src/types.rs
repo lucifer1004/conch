@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-// Re-export bare_vfs::Entry as FsEntry for use across the crate
+// Re-export bare_vfs types for use across the crate
 pub use bare_vfs::Entry as FsEntry;
 
 /// Input configuration from Typst

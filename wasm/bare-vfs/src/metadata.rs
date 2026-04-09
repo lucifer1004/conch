@@ -1,5 +1,3 @@
-use crate::Entry;
-
 /// File metadata returned by [`crate::MemFs::metadata`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Metadata {
@@ -9,11 +7,11 @@ pub struct Metadata {
 }
 
 impl Metadata {
-    pub(crate) fn from_entry(entry: &Entry) -> Self {
+    pub(crate) fn new(is_file: bool, size: usize, mode: u16) -> Self {
         Metadata {
-            is_file: entry.is_file(),
-            size: entry.len(),
-            mode: entry.mode(),
+            is_file,
+            size,
+            mode,
         }
     }
 
@@ -63,9 +61,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn from_file_entry() {
-        let e = Entry::file_with_mode("hello", 0o755);
-        let m = Metadata::from_entry(&e);
+    fn file_metadata() {
+        let m = Metadata::new(true, 5, 0o755);
         assert!(m.is_file());
         assert!(!m.is_dir());
         assert_eq!(m.len(), 5);
@@ -77,9 +74,8 @@ mod tests {
     }
 
     #[test]
-    fn from_dir_entry() {
-        let e = Entry::dir_with_mode(0o500);
-        let m = Metadata::from_entry(&e);
+    fn dir_metadata() {
+        let m = Metadata::new(false, 0, 0o500);
         assert!(m.is_dir());
         assert!(!m.is_file());
         assert_eq!(m.len(), 0);

@@ -1,63 +1,232 @@
 use alloc::collections::BTreeMap;
-use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt;
 
 use crate::dir::DirEntry;
-use crate::entry::Entry;
+use crate::entry::{Entry, EntryRef};
 use crate::error::VfsError;
 use crate::metadata::Metadata;
 
-/// An in-memory virtual filesystem backed by a sorted `BTreeMap`.
+// ---------------------------------------------------------------------------
+// Internal trie node
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub(crate) enum TreeNode {
+    File {
+        content: Vec<u8>,
+        mode: u16,
+    },
+    Dir {
+        mode: u16,
+        children: BTreeMap<String, TreeNode>,
+    },
+}
+
+impl TreeNode {
+    fn is_dir(&self) -> bool {
+        matches!(self, TreeNode::Dir { .. })
+    }
+
+    fn is_file(&self) -> bool {
+        matches!(self, TreeNode::File { .. })
+    }
+
+    fn mode(&self) -> u16 {
+        match self {
+            TreeNode::File { mode, .. } | TreeNode::Dir { mode, .. } => *mode,
+        }
+    }
+
+    fn mode_mut(&mut self) -> &mut u16 {
+        match self {
+            TreeNode::File { mode, .. } | TreeNode::Dir { mode, .. } => mode,
+        }
+    }
+
+    fn as_entry_ref(&self) -> EntryRef<'_> {
+        match self {
+            TreeNode::File { content, mode } => EntryRef::File {
+                content,
+                mode: *mode,
+            },
+            TreeNode::Dir { mode, .. } => EntryRef::Dir { mode: *mode },
+        }
+    }
+
+    fn to_metadata(&self) -> Metadata {
+        Metadata::new(
+            self.is_file(),
+            match self {
+                TreeNode::File { content, .. } => content.len(),
+                TreeNode::Dir { .. } => 0,
+            },
+            self.mode(),
+        )
+    }
+
+    /// Collect all paths via DFS.
+    fn collect_paths(&self, prefix: &str, out: &mut Vec<String>) {
+        out.push(prefix.to_string());
+        if let TreeNode::Dir { children, .. } = self {
+            for (name, child) in children {
+                let child_path = if prefix == "/" {
+                    alloc::format!("/{}", name)
+                } else {
+                    alloc::format!("{}/{}", prefix, name)
+                };
+                child.collect_paths(&child_path, out);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Path splitting helper
+// ---------------------------------------------------------------------------
+
+/// Split an absolute path into components. "/" → empty vec, "/a/b" → ["a", "b"].
+fn split_path(path: &str) -> Vec<&str> {
+    path.split('/').filter(|s| !s.is_empty()).collect()
+}
+
+// ---------------------------------------------------------------------------
+// MemFs
+// ---------------------------------------------------------------------------
+
+/// An in-memory virtual filesystem backed by a trie (prefix tree).
 ///
 /// Paths are `/`-separated strings. Every stored path is absolute; the root
 /// directory `/` always exists.
+///
+/// Directory listings are O(children), not O(total entries).
+/// Recursive deletion is O(1) — just drops the subtree.
 pub struct MemFs {
-    entries: BTreeMap<String, Entry>,
+    root: TreeNode,
 }
 
 impl MemFs {
     /// Create a new filesystem containing only the root directory `/`.
     pub fn new() -> Self {
-        let mut entries = BTreeMap::new();
-        entries.insert("/".to_string(), Entry::dir());
-        MemFs { entries }
+        MemFs {
+            root: TreeNode::Dir {
+                mode: 0o755,
+                children: BTreeMap::new(),
+            },
+        }
+    }
+
+    // -- Internal traversal -------------------------------------------------
+
+    fn traverse(&self, path: &str) -> Option<&TreeNode> {
+        if path.is_empty() {
+            return None;
+        }
+        if path == "/" {
+            return Some(&self.root);
+        }
+        let mut node = &self.root;
+        for component in split_path(path) {
+            match node {
+                TreeNode::Dir { children, .. } => {
+                    node = children.get(component)?;
+                }
+                TreeNode::File { .. } => return None,
+            }
+        }
+        Some(node)
+    }
+
+    fn traverse_mut(&mut self, path: &str) -> Option<&mut TreeNode> {
+        if path.is_empty() {
+            return None;
+        }
+        if path == "/" {
+            return Some(&mut self.root);
+        }
+        let mut node = &mut self.root;
+        for component in split_path(path) {
+            match node {
+                TreeNode::Dir { children, .. } => {
+                    node = children.get_mut(component)?;
+                }
+                TreeNode::File { .. } => return None,
+            }
+        }
+        Some(node)
+    }
+
+    /// Get mutable access to the parent directory's children map and the leaf name.
+    ///
+    /// Uses a raw-pointer trick to work around Rust's inability to return
+    /// a mutable reference produced by chained reborrows.
+    fn traverse_parent_mut<'a>(
+        &'a mut self,
+        path: &'a str,
+    ) -> Option<(&'a mut BTreeMap<String, TreeNode>, &'a str)> {
+        let components = split_path(path);
+        if components.is_empty() {
+            return None; // root has no parent
+        }
+        let (parents, leaf) = components.split_at(components.len() - 1);
+        let leaf_name = leaf[0];
+
+        let mut node: *mut TreeNode = &mut self.root;
+        for component in parents {
+            // SAFETY: we hold &mut self, so exclusive access is guaranteed.
+            // The pointer chain follows the same path a safe &mut traversal would,
+            // but avoids the reborrow-lifetime problem.
+            unsafe {
+                match &mut *node {
+                    TreeNode::Dir { children, .. } => {
+                        node = children.get_mut(*component)? as *mut TreeNode;
+                    }
+                    TreeNode::File { .. } => return None,
+                }
+            }
+        }
+        unsafe {
+            match &mut *node {
+                TreeNode::Dir { children, .. } => Some((children, leaf_name)),
+                TreeNode::File { .. } => None,
+            }
+        }
     }
 
     // -- Queries ------------------------------------------------------------
 
-    /// Get a reference to the entry at `path`, if it exists.
-    pub fn get(&self, path: &str) -> Option<&Entry> {
-        self.entries.get(path)
+    /// Get a borrowed view of the entry at `path`, if it exists.
+    pub fn get(&self, path: &str) -> Option<EntryRef<'_>> {
+        self.traverse(path).map(|n| n.as_entry_ref())
     }
 
     /// Returns `true` if an entry exists at `path`.
     pub fn exists(&self, path: &str) -> bool {
-        self.entries.contains_key(path)
+        self.traverse(path).is_some()
     }
 
     /// Returns `true` if `path` is a file.
     pub fn is_file(&self, path: &str) -> bool {
-        self.entries.get(path).is_some_and(|e| e.is_file())
+        self.traverse(path).is_some_and(|n| n.is_file())
     }
 
     /// Returns `true` if `path` is a directory.
     pub fn is_dir(&self, path: &str) -> bool {
-        self.entries.get(path).is_some_and(|e| e.is_dir())
+        self.traverse(path).is_some_and(|n| n.is_dir())
     }
 
     /// Read the raw byte content of a file, checking read permission.
     pub fn read(&self, path: &str) -> Result<&[u8], VfsError> {
-        match self.entries.get(path) {
-            Some(Entry::File { content, mode }) => {
+        match self.traverse(path) {
+            Some(TreeNode::File { content, mode }) => {
                 if mode & 0o400 == 0 {
                     Err(VfsError::PermissionDenied)
                 } else {
                     Ok(content)
                 }
             }
-            Some(Entry::Dir { .. }) => Err(VfsError::IsADirectory),
+            Some(TreeNode::Dir { .. }) => Err(VfsError::IsADirectory),
             None => Err(VfsError::NotFound),
         }
     }
@@ -72,8 +241,8 @@ impl MemFs {
 
     /// Get metadata for an entry.
     pub fn metadata(&self, path: &str) -> Result<Metadata, VfsError> {
-        match self.entries.get(path) {
-            Some(entry) => Ok(Metadata::from_entry(entry)),
+        match self.traverse(path) {
+            Some(node) => Ok(node.to_metadata()),
             None => Err(VfsError::NotFound),
         }
     }
@@ -82,47 +251,41 @@ impl MemFs {
 
     /// List the direct children of a directory, sorted by name.
     pub fn read_dir(&self, dir: &str) -> Result<Vec<DirEntry>, VfsError> {
-        match self.entries.get(dir) {
-            Some(e) if e.is_dir() => {}
-            Some(_) => return Err(VfsError::NotADirectory),
-            None => return Err(VfsError::NotFound),
-        }
-
-        let prefix = if dir == "/" {
-            "/".into()
-        } else {
-            format!("{}/", dir)
-        };
-
-        let mut result = Vec::new();
-        for (p, entry) in &self.entries {
-            if p == dir || !p.starts_with(&prefix) {
-                continue;
+        match self.traverse(dir) {
+            Some(TreeNode::Dir { children, .. }) => {
+                // BTreeMap is already sorted by key
+                Ok(children
+                    .iter()
+                    .map(|(name, node)| DirEntry {
+                        name: name.clone(),
+                        is_dir: node.is_dir(),
+                        mode: node.mode(),
+                    })
+                    .collect())
             }
-            let rel = &p[prefix.len()..];
-            if rel.is_empty() || rel.contains('/') {
-                continue;
-            }
-            result.push(DirEntry {
-                name: rel.to_string(),
-                is_dir: entry.is_dir(),
-                mode: entry.mode(),
-            });
+            Some(TreeNode::File { .. }) => Err(VfsError::NotADirectory),
+            None => Err(VfsError::NotFound),
         }
-        result.sort_by(|a, b| a.name.cmp(&b.name));
-        Ok(result)
     }
 
     // -- Iteration ----------------------------------------------------------
 
-    /// Iterate over all `(path, entry)` pairs.
-    pub fn iter(&self) -> impl Iterator<Item = (&str, &Entry)> {
-        self.entries.iter().map(|(k, v)| (k.as_str(), v))
+    /// Collect all stored paths via depth-first traversal.
+    pub fn paths(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        self.root.collect_paths("/", &mut out);
+        out
     }
 
-    /// Iterate over all stored paths.
-    pub fn paths(&self) -> impl Iterator<Item = &str> {
-        self.entries.keys().map(|s| s.as_str())
+    /// Collect all `(path, entry_ref)` pairs via depth-first traversal.
+    pub fn iter(&self) -> Vec<(String, EntryRef<'_>)> {
+        self.paths()
+            .into_iter()
+            .filter_map(|p| {
+                let entry = self.get(&p)?;
+                Some((p, entry))
+            })
+            .collect()
     }
 
     // -- Mutations ----------------------------------------------------------
@@ -130,100 +293,156 @@ impl MemFs {
     /// Insert an entry at the given path.
     ///
     /// This is a low-level method; it does **not** create parent directories.
+    /// Panics if the parent directory does not exist.
     pub fn insert(&mut self, path: String, entry: Entry) {
-        self.entries.insert(path, entry);
+        let node = match entry {
+            Entry::File { content, mode } => TreeNode::File { content, mode },
+            Entry::Dir { mode } => TreeNode::Dir {
+                mode,
+                children: BTreeMap::new(),
+            },
+        };
+        if path == "/" {
+            self.root = node;
+            return;
+        }
+        if let Some((children, name)) = self.traverse_parent_mut(&path) {
+            children.insert(name.to_string(), node);
+        }
     }
 
-    /// Remove the entry at `path` and return it, if it existed.
+    /// Remove the entry at `path` and return it as an [`Entry`], if it existed.
+    ///
+    /// For directories, this removes the entire subtree.
     pub fn remove(&mut self, path: &str) -> Option<Entry> {
-        self.entries.remove(path)
+        if path == "/" {
+            return None;
+        }
+        let (children, name) = self.traverse_parent_mut(path)?;
+        let node = children.remove(name)?;
+        Some(match node {
+            TreeNode::File { content, mode } => Entry::File { content, mode },
+            TreeNode::Dir { mode, .. } => Entry::Dir { mode },
+        })
     }
 
     /// Write a file with default permissions (`0o644`). Overwrites if it exists.
     pub fn write(&mut self, path: &str, content: impl Into<Vec<u8>>) {
-        self.entries.insert(path.to_string(), Entry::file(content));
+        let node = TreeNode::File {
+            content: content.into(),
+            mode: 0o644,
+        };
+        if let Some((children, name)) = self.traverse_parent_mut(path) {
+            children.insert(name.to_string(), node);
+        }
     }
 
     /// Write a file with explicit permissions. Overwrites if it exists.
     pub fn write_with_mode(&mut self, path: &str, content: impl Into<Vec<u8>>, mode: u16) {
-        self.entries
-            .insert(path.to_string(), Entry::file_with_mode(content, mode));
+        let node = TreeNode::File {
+            content: content.into(),
+            mode,
+        };
+        if let Some((children, name)) = self.traverse_parent_mut(path) {
+            children.insert(name.to_string(), node);
+        }
     }
 
     /// Append data to an existing file. Checks write permission.
-    ///
-    /// Returns [`VfsError::NotFound`] if the file does not exist.
     pub fn append(&mut self, path: &str, data: &[u8]) -> Result<(), VfsError> {
-        match self.entries.get_mut(path) {
-            Some(Entry::File { content, mode }) => {
+        match self.traverse_mut(path) {
+            Some(TreeNode::File { content, mode }) => {
                 if *mode & 0o200 == 0 {
                     return Err(VfsError::PermissionDenied);
                 }
                 content.extend_from_slice(data);
                 Ok(())
             }
-            Some(Entry::Dir { .. }) => Err(VfsError::IsADirectory),
+            Some(TreeNode::Dir { .. }) => Err(VfsError::IsADirectory),
             None => Err(VfsError::NotFound),
         }
     }
 
     /// Create a single directory. Fails if the parent does not exist.
     pub fn create_dir(&mut self, path: &str) -> Result<(), VfsError> {
-        if self.entries.contains_key(path) {
+        if self.exists(path) {
             return Err(VfsError::AlreadyExists);
         }
         let parent = crate::parent(path).unwrap_or("/");
         if !self.is_dir(parent) {
             return Err(VfsError::NotFound);
         }
-        self.entries.insert(path.to_string(), Entry::dir());
+        let (children, name) = self.traverse_parent_mut(path).ok_or(VfsError::NotFound)?;
+        children.insert(
+            name.to_string(),
+            TreeNode::Dir {
+                mode: 0o755,
+                children: BTreeMap::new(),
+            },
+        );
         Ok(())
     }
 
     /// Create a directory and all missing ancestors.
     pub fn create_dir_all(&mut self, path: &str) {
-        let mut current = String::new();
-        for part in path.split('/').filter(|s| !s.is_empty()) {
-            current.push('/');
-            current.push_str(part);
-            self.entries
-                .entry(current.clone())
-                .or_insert_with(Entry::dir);
+        let components = split_path(path);
+        let mut node = &mut self.root;
+        for component in components {
+            // Ensure current node is a directory, then get/create child
+            let children = match node {
+                TreeNode::Dir { children, .. } => children,
+                TreeNode::File { .. } => return, // can't descend into a file
+            };
+            node = children
+                .entry(component.to_string())
+                .or_insert_with(|| TreeNode::Dir {
+                    mode: 0o755,
+                    children: BTreeMap::new(),
+                });
         }
     }
 
     /// Create an empty file if `path` does not already exist.
     pub fn touch(&mut self, path: &str) {
-        self.entries
-            .entry(path.to_string())
-            .or_insert_with(|| Entry::file(Vec::new()));
+        if self.exists(path) {
+            return;
+        }
+        if let Some((children, name)) = self.traverse_parent_mut(path) {
+            children
+                .entry(name.to_string())
+                .or_insert_with(|| TreeNode::File {
+                    content: Vec::new(),
+                    mode: 0o644,
+                });
+        }
     }
 
     /// Remove a directory and everything beneath it.
     pub fn remove_dir_all(&mut self, path: &str) -> Result<(), VfsError> {
-        match self.entries.get(path) {
-            Some(e) if e.is_dir() => {}
+        if path == "/" {
+            // Clear root children but keep root itself
+            if let TreeNode::Dir { children, .. } = &mut self.root {
+                children.clear();
+            }
+            return Ok(());
+        }
+        match self.traverse(path) {
+            Some(n) if n.is_dir() => {}
             Some(_) => return Err(VfsError::NotADirectory),
             None => return Err(VfsError::NotFound),
         }
-        let prefix = format!("{}/", path);
-        let to_remove: Vec<String> = self
-            .entries
-            .keys()
-            .filter(|k| *k == path || k.starts_with(&prefix))
-            .cloned()
-            .collect();
-        for k in to_remove {
-            self.entries.remove(&k);
+        // Now remove — traverse_parent_mut borrows mutably
+        if let Some((children, name)) = self.traverse_parent_mut(path) {
+            children.remove(name);
         }
         Ok(())
     }
 
     /// Set the permission mode on an existing entry.
     pub fn set_mode(&mut self, path: &str, mode: u16) -> Result<(), VfsError> {
-        match self.entries.get_mut(path) {
-            Some(Entry::File { mode: m, .. }) | Some(Entry::Dir { mode: m }) => {
-                *m = mode;
+        match self.traverse_mut(path) {
+            Some(node) => {
+                *node.mode_mut() = mode;
                 Ok(())
             }
             None => Err(VfsError::NotFound),
@@ -232,29 +451,43 @@ impl MemFs {
 
     /// Copy a file. Checks read permission on the source.
     pub fn copy(&mut self, src: &str, dst: &str) -> Result<(), VfsError> {
-        let entry = match self.entries.get(src) {
-            Some(Entry::File { content, mode }) => {
+        let (content, _mode) = match self.traverse(src) {
+            Some(TreeNode::File { content, mode }) => {
                 if mode & 0o400 == 0 {
                     return Err(VfsError::PermissionDenied);
                 }
-                Entry::file(content.clone())
+                (content.clone(), *mode)
             }
-            Some(Entry::Dir { .. }) => return Err(VfsError::IsADirectory),
+            Some(TreeNode::Dir { .. }) => return Err(VfsError::IsADirectory),
             None => return Err(VfsError::NotFound),
         };
-        self.entries.insert(dst.to_string(), entry);
+        let node = TreeNode::File {
+            content,
+            mode: 0o644,
+        };
+        if let Some((children, name)) = self.traverse_parent_mut(dst) {
+            children.insert(name.to_string(), node);
+        }
         Ok(())
     }
 
     /// Move (rename) an entry from `src` to `dst`.
     pub fn rename(&mut self, src: &str, dst: &str) -> Result<(), VfsError> {
-        match self.entries.remove(src) {
-            Some(entry) => {
-                self.entries.insert(dst.to_string(), entry);
-                Ok(())
-            }
-            None => Err(VfsError::NotFound),
+        if src == "/" || dst == "/" {
+            return Err(VfsError::PermissionDenied);
         }
+        // Remove source
+        let src_components = split_path(src);
+        let src_name = *src_components.last().ok_or(VfsError::NotFound)?;
+        let node = {
+            let (children, _) = self.traverse_parent_mut(src).ok_or(VfsError::NotFound)?;
+            children.remove(src_name).ok_or(VfsError::NotFound)?
+        };
+        // Insert at destination
+        if let Some((children, name)) = self.traverse_parent_mut(dst) {
+            children.insert(name.to_string(), node);
+        }
+        Ok(())
     }
 
     // -- Delegated path utilities -------------------------------------------
@@ -278,9 +511,7 @@ impl Default for MemFs {
 
 impl fmt::Debug for MemFs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("MemFs")
-            .field("entries", &self.entries.len())
-            .finish()
+        f.debug_struct("MemFs").finish_non_exhaustive()
     }
 }
 
@@ -365,11 +596,12 @@ mod tests {
     }
 
     #[test]
-    fn get_returns_entry() {
+    fn get_returns_entry_ref() {
         let mut fs = MemFs::new();
         fs.write("/f.txt", "data".to_string());
         let e = fs.get("/f.txt").unwrap();
         assert!(e.is_file());
+        assert_eq!(e.content_str(), Some("data"));
         assert!(fs.get("/missing").is_none());
     }
 
@@ -687,10 +919,10 @@ mod tests {
         let mut fs = MemFs::new();
         fs.create_dir_all("/a");
         fs.write("/a/f.txt", "x".to_string());
-        let paths: Vec<&str> = fs.paths().collect();
-        assert!(paths.contains(&"/"));
-        assert!(paths.contains(&"/a"));
-        assert!(paths.contains(&"/a/f.txt"));
+        let paths = fs.paths();
+        assert!(paths.contains(&"/".to_string()));
+        assert!(paths.contains(&"/a".to_string()));
+        assert!(paths.contains(&"/a/f.txt".to_string()));
     }
 
     // -- insert (low-level) -------------------------------------------------
@@ -702,5 +934,391 @@ mod tests {
         let e = fs.get("/custom").unwrap();
         assert_eq!(e.content_str(), Some("data"));
         assert!(e.is_executable());
+    }
+
+    // -- Trie-specific behavior ---------------------------------------------
+
+    #[test]
+    fn deep_nesting() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/a/b/c/d/e/f");
+        fs.write("/a/b/c/d/e/f/deep.txt", "bottom".to_string());
+        assert_eq!(fs.read_to_string("/a/b/c/d/e/f/deep.txt"), Ok("bottom"));
+        assert!(fs.is_dir("/a/b/c/d/e/f"));
+        assert!(fs.is_dir("/a/b/c"));
+    }
+
+    #[test]
+    fn remove_dir_drops_entire_subtree() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/a/b/c");
+        fs.write("/a/b/c/f1.txt", "1".to_string());
+        fs.write("/a/b/f2.txt", "2".to_string());
+        // remove() on a dir now drops the whole subtree
+        let removed = fs.remove("/a/b");
+        assert!(removed.is_some());
+        assert!(!fs.exists("/a/b"));
+        assert!(!fs.exists("/a/b/c"));
+        assert!(!fs.exists("/a/b/c/f1.txt"));
+        assert!(!fs.exists("/a/b/f2.txt"));
+        // parent still exists
+        assert!(fs.is_dir("/a"));
+    }
+
+    #[test]
+    fn remove_file_does_not_affect_siblings() {
+        let mut fs = MemFs::new();
+        fs.write("/a.txt", "a".to_string());
+        fs.write("/b.txt", "b".to_string());
+        fs.remove("/a.txt");
+        assert!(!fs.exists("/a.txt"));
+        assert_eq!(fs.read_to_string("/b.txt"), Ok("b"));
+    }
+
+    #[test]
+    fn write_to_missing_parent_is_noop() {
+        let mut fs = MemFs::new();
+        fs.write("/nonexistent/file.txt", "data".to_string());
+        assert!(!fs.exists("/nonexistent"));
+        assert!(!fs.exists("/nonexistent/file.txt"));
+    }
+
+    #[test]
+    fn touch_missing_parent_is_noop() {
+        let mut fs = MemFs::new();
+        fs.touch("/nonexistent/file.txt");
+        assert!(!fs.exists("/nonexistent/file.txt"));
+    }
+
+    #[test]
+    fn paths_dfs_order() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/a/b");
+        fs.write("/a/b/f.txt", "".to_string());
+        fs.write("/a/g.txt", "".to_string());
+        fs.create_dir_all("/z");
+        let paths = fs.paths();
+        // DFS: / → /a → /a/b → /a/b/f.txt → /a/g.txt → /z
+        let a_idx = paths.iter().position(|p| p == "/a").unwrap();
+        let ab_idx = paths.iter().position(|p| p == "/a/b").unwrap();
+        let abf_idx = paths.iter().position(|p| p == "/a/b/f.txt").unwrap();
+        let ag_idx = paths.iter().position(|p| p == "/a/g.txt").unwrap();
+        let z_idx = paths.iter().position(|p| p == "/z").unwrap();
+        // /a comes before its children
+        assert!(a_idx < ab_idx);
+        assert!(ab_idx < abf_idx);
+        // /a subtree before /z
+        assert!(ag_idx < z_idx);
+    }
+
+    #[test]
+    fn iter_returns_correct_entry_types() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/d");
+        fs.write("/d/f.txt", "data".to_string());
+        let entries = fs.iter();
+        let root = entries.iter().find(|(p, _)| p == "/").unwrap();
+        assert!(root.1.is_dir());
+        let dir = entries.iter().find(|(p, _)| p == "/d").unwrap();
+        assert!(dir.1.is_dir());
+        let file = entries.iter().find(|(p, _)| p == "/d/f.txt").unwrap();
+        assert!(file.1.is_file());
+        assert_eq!(file.1.content_str(), Some("data"));
+    }
+
+    #[test]
+    fn create_dir_all_does_not_overwrite_file() {
+        let mut fs = MemFs::new();
+        fs.write("/a", "file".to_string());
+        // Trying to create_dir_all through a file stops
+        fs.create_dir_all("/a/b/c");
+        assert!(fs.is_file("/a")); // still a file
+        assert!(!fs.exists("/a/b"));
+    }
+
+    #[test]
+    fn remove_root_returns_none() {
+        let mut fs = MemFs::new();
+        assert!(fs.remove("/").is_none());
+        assert!(fs.is_dir("/")); // root survives
+    }
+
+    #[test]
+    fn rename_moves_subtree() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/src/sub");
+        fs.write("/src/sub/f.txt", "data".to_string());
+        fs.create_dir_all("/dst");
+        fs.rename("/src", "/dst/moved").unwrap();
+        assert!(!fs.exists("/src"));
+        assert!(fs.is_dir("/dst/moved"));
+        assert!(fs.is_dir("/dst/moved/sub"));
+        assert_eq!(fs.read_to_string("/dst/moved/sub/f.txt"), Ok("data"));
+    }
+
+    #[test]
+    fn many_siblings() {
+        let mut fs = MemFs::new();
+        for i in 0..100 {
+            fs.write(&alloc::format!("/f{:03}.txt", i), alloc::format!("{}", i));
+        }
+        let entries = fs.read_dir("/").unwrap();
+        assert_eq!(entries.len(), 100);
+        // Sorted by name
+        assert_eq!(entries[0].name, "f000.txt");
+        assert_eq!(entries[99].name, "f099.txt");
+    }
+
+    #[test]
+    fn metadata_via_get() {
+        let mut fs = MemFs::new();
+        fs.write_with_mode("/f.txt", "hi", 0o444);
+        let e = fs.get("/f.txt").unwrap();
+        assert!(e.is_file());
+        assert!(e.is_readable());
+        assert!(!e.is_writable());
+        assert_eq!(e.len(), 2);
+    }
+
+    #[test]
+    fn get_root() {
+        let fs = MemFs::new();
+        let e = fs.get("/").unwrap();
+        assert!(e.is_dir());
+        assert_eq!(e.mode(), 0o755);
+    }
+
+    #[test]
+    fn get_nested_missing() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/a/b");
+        assert!(fs.get("/a/b/c").is_none());
+        assert!(fs.get("/a/b/c/d").is_none());
+        assert!(fs.get("/x").is_none());
+    }
+
+    // -- Path edge cases ----------------------------------------------------
+
+    #[test]
+    fn empty_path_is_not_found() {
+        let fs = MemFs::new();
+        assert!(!fs.exists(""));
+        assert!(fs.get("").is_none());
+        assert_eq!(fs.read(""), Err(VfsError::NotFound));
+        assert_eq!(fs.metadata(""), Err(VfsError::NotFound));
+    }
+
+    #[test]
+    fn trailing_slash_treated_as_component() {
+        let mut fs = MemFs::new();
+        // "/a/" splits into ["a", ""] — the empty component is filtered out by split_path
+        fs.create_dir_all("/a");
+        fs.write("/a/f.txt", "x".to_string());
+        // These should still work because split_path filters empty segments
+        assert!(fs.is_dir("/a"));
+    }
+
+    #[test]
+    fn path_with_special_chars() {
+        let mut fs = MemFs::new();
+        fs.write("/hello world.txt", "spaces".to_string());
+        fs.write("/café.txt", "unicode".to_string());
+        fs.write("/.hidden", "dot".to_string());
+        assert_eq!(fs.read_to_string("/hello world.txt"), Ok("spaces"));
+        assert_eq!(fs.read_to_string("/café.txt"), Ok("unicode"));
+        assert_eq!(fs.read_to_string("/.hidden"), Ok("dot"));
+    }
+
+    // -- Mutation conflict edge cases ---------------------------------------
+
+    #[test]
+    fn write_overwrites_dir_with_file() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/a/b");
+        fs.write("/a/b/f.txt", "x".to_string());
+        // Overwrite dir /a with a file
+        fs.write("/a", "now a file".to_string());
+        assert!(fs.is_file("/a"));
+        // Children are gone (the dir node was replaced)
+        assert!(!fs.exists("/a/b"));
+    }
+
+    #[test]
+    fn insert_dir_replaces_file() {
+        let mut fs = MemFs::new();
+        fs.write("/x", "file".to_string());
+        fs.insert("/x".into(), Entry::dir());
+        assert!(fs.is_dir("/x"));
+    }
+
+    #[test]
+    fn touch_on_existing_dir_is_noop() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/d");
+        fs.touch("/d");
+        // Should still be a directory, not converted to file
+        assert!(fs.is_dir("/d"));
+    }
+
+    #[test]
+    fn create_dir_where_file_exists() {
+        let mut fs = MemFs::new();
+        fs.write("/x", "file".to_string());
+        assert_eq!(fs.create_dir("/x"), Err(VfsError::AlreadyExists));
+        assert!(fs.is_file("/x")); // unchanged
+    }
+
+    #[test]
+    fn rename_to_self() {
+        let mut fs = MemFs::new();
+        fs.write("/f.txt", "data".to_string());
+        // This removes source then inserts at dst — same path means it works
+        assert!(fs.rename("/f.txt", "/f.txt").is_ok());
+        assert_eq!(fs.read_to_string("/f.txt"), Ok("data"));
+    }
+
+    #[test]
+    fn rename_overwrites_destination() {
+        let mut fs = MemFs::new();
+        fs.write("/src", "new".to_string());
+        fs.write("/dst", "old".to_string());
+        fs.rename("/src", "/dst").unwrap();
+        assert!(!fs.exists("/src"));
+        assert_eq!(fs.read_to_string("/dst"), Ok("new"));
+    }
+
+    #[test]
+    fn rename_root_fails() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/dst");
+        assert!(fs.rename("/", "/dst/root").is_err());
+    }
+
+    // -- Boundary conditions ------------------------------------------------
+
+    #[test]
+    fn empty_fs_paths() {
+        let fs = MemFs::new();
+        let paths = fs.paths();
+        assert_eq!(paths, vec!["/".to_string()]);
+    }
+
+    #[test]
+    fn empty_fs_iter() {
+        let fs = MemFs::new();
+        let entries = fs.iter();
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].1.is_dir());
+    }
+
+    #[test]
+    fn append_to_empty_file() {
+        let mut fs = MemFs::new();
+        fs.touch("/f.txt");
+        fs.append("/f.txt", b"hello").unwrap();
+        assert_eq!(fs.read_to_string("/f.txt"), Ok("hello"));
+    }
+
+    #[test]
+    fn append_multiple_times() {
+        let mut fs = MemFs::new();
+        fs.write("/f.txt", "a".to_string());
+        fs.append("/f.txt", b"b").unwrap();
+        fs.append("/f.txt", b"c").unwrap();
+        assert_eq!(fs.read_to_string("/f.txt"), Ok("abc"));
+    }
+
+    #[test]
+    fn remove_dir_all_root_clears_children() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/a/b");
+        fs.write("/a/b/f.txt", "x".to_string());
+        fs.write("/c.txt", "y".to_string());
+        fs.remove_dir_all("/").unwrap();
+        assert!(fs.is_dir("/")); // root still exists
+        assert!(!fs.exists("/a")); // children gone
+        assert!(!fs.exists("/c.txt"));
+        assert!(fs.read_dir("/").unwrap().is_empty());
+    }
+
+    #[test]
+    fn remove_dir_all_empty_dir() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/empty");
+        assert!(fs.remove_dir_all("/empty").is_ok());
+        assert!(!fs.exists("/empty"));
+    }
+
+    #[test]
+    fn set_mode_on_root() {
+        let mut fs = MemFs::new();
+        fs.set_mode("/", 0o500).unwrap();
+        assert_eq!(fs.get("/").unwrap().mode(), 0o500);
+    }
+
+    #[test]
+    fn read_dir_preserves_child_modes() {
+        let mut fs = MemFs::new();
+        fs.write_with_mode("/a.txt", "x", 0o444);
+        fs.create_dir_all("/d");
+        fs.set_mode("/d", 0o700).unwrap();
+        let entries = fs.read_dir("/").unwrap();
+        let a = entries.iter().find(|e| e.name == "a.txt").unwrap();
+        let d = entries.iter().find(|e| e.name == "d").unwrap();
+        assert_eq!(a.mode, 0o444);
+        assert_eq!(d.mode, 0o700);
+    }
+
+    // -- Binary content edge cases ------------------------------------------
+
+    #[test]
+    fn file_with_null_bytes() {
+        let mut fs = MemFs::new();
+        fs.write("/bin", vec![0u8, 0, 0]);
+        assert_eq!(fs.read("/bin"), Ok([0u8, 0, 0].as_slice()));
+        // Null bytes are valid UTF-8
+        assert_eq!(fs.read_to_string("/bin"), Ok("\0\0\0"));
+    }
+
+    #[test]
+    fn read_returns_exact_bytes() {
+        let mut fs = MemFs::new();
+        let data: Vec<u8> = (0..=255).collect();
+        fs.write("/all_bytes", data.clone());
+        assert_eq!(fs.read("/all_bytes").unwrap().len(), 256);
+        assert_eq!(fs.read("/all_bytes"), Ok(data.as_slice()));
+    }
+
+    // -- Post-deletion consistency ------------------------------------------
+
+    #[test]
+    fn paths_after_deletion() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/a/b");
+        fs.write("/a/b/f.txt", "x".to_string());
+        fs.write("/c.txt", "y".to_string());
+        fs.remove_dir_all("/a").unwrap();
+        let paths = fs.paths();
+        assert!(paths.contains(&"/".to_string()));
+        assert!(paths.contains(&"/c.txt".to_string()));
+        assert!(!paths.contains(&"/a".to_string()));
+        assert!(!paths.contains(&"/a/b".to_string()));
+    }
+
+    #[test]
+    fn operations_after_remove_middle() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/a/b/c");
+        fs.write("/a/b/c/deep.txt", "deep".to_string());
+        // Remove middle node
+        fs.remove_dir_all("/a/b").unwrap();
+        assert!(fs.is_dir("/a"));
+        assert!(!fs.exists("/a/b"));
+        // Can recreate
+        fs.create_dir_all("/a/b/new");
+        fs.write("/a/b/new/f.txt", "fresh".to_string());
+        assert_eq!(fs.read_to_string("/a/b/new/f.txt"), Ok("fresh"));
+        // Old deep path is still gone
+        assert!(!fs.exists("/a/b/c"));
     }
 }

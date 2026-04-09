@@ -185,33 +185,18 @@ impl Shell {
 
         for t in &targets {
             let path = self.resolve(t);
-            match self.fs.get(&path) {
-                Some(e) if e.is_dir() => {
-                    if !recursive {
-                        return (format!("rm: cannot remove '{}': Is a directory", t), 1);
-                    }
-                    let prefix = format!("{}/", path);
-                    let to_rm: Vec<String> = self
-                        .fs
-                        .paths()
-                        .filter(|k| *k == path || k.starts_with(&prefix))
-                        .map(|s| s.to_string())
-                        .collect();
-                    for k in &to_rm {
-                        self.fs.remove(k);
-                    }
+            if self.fs.is_dir(&path) {
+                if !recursive {
+                    return (format!("rm: cannot remove '{}': Is a directory", t), 1);
                 }
-                Some(e) if e.is_file() => {
-                    self.fs.remove(&path);
-                }
-                _ => {
-                    if !force {
-                        return (
-                            format!("rm: cannot remove '{}': No such file or directory", t),
-                            1,
-                        );
-                    }
-                }
+                let _ = self.fs.remove_dir_all(&path);
+            } else if self.fs.is_file(&path) {
+                self.fs.remove(&path);
+            } else if !force {
+                return (
+                    format!("rm: cannot remove '{}': No such file or directory", t),
+                    1,
+                );
             }
         }
         (String::new(), 0)
@@ -321,7 +306,7 @@ impl Shell {
             }
 
             if let Some(ref g) = glob {
-                let name = p.rsplit('/').next().unwrap_or(p);
+                let name = p.rsplit('/').next().unwrap_or(&p);
                 if !g.is_match(name) {
                     continue;
                 }
