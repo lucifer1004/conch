@@ -1,15 +1,16 @@
-//! File handles with `Read` and `Seek` support (requires `std` feature).
+//! File handles with `Read`, `Write`, and `Seek` support (requires `std` feature).
 
 use alloc::vec::Vec;
-use std::io::{self, Cursor, Read, Seek, SeekFrom};
+use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
 
 use crate::error::VfsError;
 use crate::fs::MemFs;
 
-/// A read-only file handle backed by a copy of the file content.
+/// A file handle backed by a copy of the file content.
 ///
-/// Implements [`Read`] and [`Seek`], allowing integration with any library
-/// that accepts generic readers.
+/// Implements [`Read`], [`Write`], and [`Seek`]. The handle operates on an
+/// in-memory buffer; call [`MemFs::commit`] to persist changes back to the
+/// filesystem.
 ///
 /// Obtained via [`MemFs::open`].
 #[derive(Debug)]
@@ -57,6 +58,16 @@ impl Seek for FileHandle {
     }
 }
 
+impl Write for FileHandle {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.cursor.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.cursor.flush()
+    }
+}
+
 impl MemFs {
     /// Open a file for reading. Returns a [`FileHandle`] that implements
     /// [`Read`] and [`Seek`].
@@ -67,6 +78,12 @@ impl MemFs {
         let bytes = self.read(path)?;
         Ok(FileHandle::new(bytes.to_vec()))
     }
+
+    /// Persist the contents of a [`FileHandle`] back to the filesystem,
+    /// overwriting the file at `path`.
+    pub fn commit(&mut self, path: &str, handle: FileHandle) {
+        self.write(path, handle.into_inner());
+    }
 }
 
 #[cfg(test)]
@@ -75,7 +92,7 @@ mod tests {
     use alloc::string::{String, ToString};
     use alloc::vec;
     use alloc::vec::Vec;
-    use std::io::Read;
+    use std::io::{Read, Write};
 
     #[test]
     fn open_and_read() {
@@ -144,5 +161,50 @@ mod tests {
         fs.write("/f.txt", "data".to_string());
         let h = fs.open("/f.txt").unwrap();
         assert_eq!(h.into_inner(), b"data");
+    }
+
+    #[test]
+    fn write_and_commit() {
+        let mut fs = MemFs::new();
+        fs.write("/f.txt", "hello");
+        let mut h = fs.open("/f.txt").unwrap();
+        // Seek to end and append
+        h.seek(SeekFrom::End(0)).unwrap();
+        h.write_all(b" world").unwrap();
+        fs.commit("/f.txt", h);
+        assert_eq!(fs.read_to_string("/f.txt").unwrap(), "hello world");
+    }
+
+    #[test]
+    fn write_at_position() {
+        let mut fs = MemFs::new();
+        fs.write("/f.txt", "hello");
+        let mut h = fs.open("/f.txt").unwrap();
+        h.seek(SeekFrom::Start(1)).unwrap();
+        h.write_all(b"a").unwrap();
+        fs.commit("/f.txt", h);
+        assert_eq!(fs.read_to_string("/f.txt").unwrap(), "hallo");
+    }
+
+    #[test]
+    fn write_extends_buffer() {
+        let mut fs = MemFs::new();
+        fs.write("/f.txt", "hi");
+        let mut h = fs.open("/f.txt").unwrap();
+        h.seek(SeekFrom::End(0)).unwrap();
+        h.write_all(b"!!").unwrap();
+        assert_eq!(h.len(), 4);
+        fs.commit("/f.txt", h);
+        assert_eq!(fs.read_to_string("/f.txt").unwrap(), "hi!!");
+    }
+
+    #[test]
+    fn commit_to_different_path() {
+        let mut fs = MemFs::new();
+        fs.write("/src.txt", "original");
+        let h = fs.open("/src.txt").unwrap();
+        fs.commit("/dst.txt", h);
+        assert_eq!(fs.read_to_string("/dst.txt").unwrap(), "original");
+        assert_eq!(fs.read_to_string("/src.txt").unwrap(), "original");
     }
 }

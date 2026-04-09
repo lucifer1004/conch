@@ -10,11 +10,25 @@ pub enum Entry {
         mode: u16,
         uid: u32,
         gid: u32,
+        mtime: u64,
+        ctime: u64,
     },
     /// A directory with a Unix permission mode.
-    Dir { mode: u16, uid: u32, gid: u32 },
+    Dir {
+        mode: u16,
+        uid: u32,
+        gid: u32,
+        mtime: u64,
+        ctime: u64,
+    },
     /// A symbolic link pointing to `target`. Mode is always `0o777`.
-    Symlink { target: String, uid: u32, gid: u32 },
+    Symlink {
+        target: String,
+        uid: u32,
+        gid: u32,
+        mtime: u64,
+        ctime: u64,
+    },
 }
 
 impl Entry {
@@ -25,6 +39,8 @@ impl Entry {
             mode: 0o644,
             uid: 0,
             gid: 0,
+            mtime: 0,
+            ctime: 0,
         }
     }
 
@@ -35,6 +51,8 @@ impl Entry {
             mode,
             uid: 0,
             gid: 0,
+            mtime: 0,
+            ctime: 0,
         }
     }
 
@@ -44,6 +62,8 @@ impl Entry {
             mode: 0o755,
             uid: 0,
             gid: 0,
+            mtime: 0,
+            ctime: 0,
         }
     }
 
@@ -53,6 +73,8 @@ impl Entry {
             mode,
             uid: 0,
             gid: 0,
+            mtime: 0,
+            ctime: 0,
         }
     }
 
@@ -62,6 +84,8 @@ impl Entry {
             target: target.into(),
             uid: 0,
             gid: 0,
+            mtime: 0,
+            ctime: 0,
         }
     }
 
@@ -127,6 +151,24 @@ impl Entry {
         }
     }
 
+    /// Returns the last modification time.
+    pub fn mtime(&self) -> u64 {
+        match self {
+            Entry::File { mtime, .. } | Entry::Dir { mtime, .. } | Entry::Symlink { mtime, .. } => {
+                *mtime
+            }
+        }
+    }
+
+    /// Returns the last metadata change time.
+    pub fn ctime(&self) -> u64 {
+        match self {
+            Entry::File { ctime, .. } | Entry::Dir { ctime, .. } | Entry::Symlink { ctime, .. } => {
+                *ctime
+            }
+        }
+    }
+
     /// Returns `true` if the owner read bit is set.
     pub fn is_readable(&self) -> bool {
         self.mode() & 0o400 != 0
@@ -166,11 +208,25 @@ pub enum EntryRef<'a> {
         mode: u16,
         uid: u32,
         gid: u32,
+        mtime: u64,
+        ctime: u64,
     },
     /// A directory.
-    Dir { mode: u16, uid: u32, gid: u32 },
+    Dir {
+        mode: u16,
+        uid: u32,
+        gid: u32,
+        mtime: u64,
+        ctime: u64,
+    },
     /// A symbolic link with a borrowed target path.
-    Symlink { target: &'a str, uid: u32, gid: u32 },
+    Symlink {
+        target: &'a str,
+        uid: u32,
+        gid: u32,
+        mtime: u64,
+        ctime: u64,
+    },
 }
 
 impl<'a> EntryRef<'a> {
@@ -240,6 +296,24 @@ impl<'a> EntryRef<'a> {
         }
     }
 
+    /// Returns the last modification time.
+    pub fn mtime(&self) -> u64 {
+        match self {
+            EntryRef::File { mtime, .. }
+            | EntryRef::Dir { mtime, .. }
+            | EntryRef::Symlink { mtime, .. } => *mtime,
+        }
+    }
+
+    /// Returns the last metadata change time.
+    pub fn ctime(&self) -> u64 {
+        match self {
+            EntryRef::File { ctime, .. }
+            | EntryRef::Dir { ctime, .. }
+            | EntryRef::Symlink { ctime, .. } => *ctime,
+        }
+    }
+
     /// Returns `true` if the owner read bit is set.
     pub fn is_readable(&self) -> bool {
         self.mode() & 0o400 != 0
@@ -273,6 +347,8 @@ mod tests {
         assert_eq!(e.mode(), 0o644);
         assert_eq!(e.uid(), 0);
         assert_eq!(e.gid(), 0);
+        assert_eq!(e.mtime(), 0);
+        assert_eq!(e.ctime(), 0);
         assert!(e.is_readable());
         assert!(e.is_writable());
         assert!(!e.is_executable());
@@ -302,6 +378,8 @@ mod tests {
         assert_eq!(e.mode(), 0o755);
         assert_eq!(e.uid(), 0);
         assert_eq!(e.gid(), 0);
+        assert_eq!(e.mtime(), 0);
+        assert_eq!(e.ctime(), 0);
         assert!(e.is_readable());
         assert!(e.is_writable());
         assert!(e.is_executable());
@@ -344,6 +422,8 @@ mod tests {
             mode: 0o755,
             uid: 1000,
             gid: 1000,
+            mtime: 5,
+            ctime: 3,
         };
         assert!(r.is_file());
         assert!(!r.is_dir());
@@ -353,6 +433,8 @@ mod tests {
         assert_eq!(r.mode(), 0o755);
         assert_eq!(r.uid(), 1000);
         assert_eq!(r.gid(), 1000);
+        assert_eq!(r.mtime(), 5);
+        assert_eq!(r.ctime(), 3);
         assert!(r.is_readable());
         assert!(r.is_writable());
         assert!(r.is_executable());
@@ -364,6 +446,8 @@ mod tests {
             mode: 0o500,
             uid: 0,
             gid: 0,
+            mtime: 0,
+            ctime: 0,
         };
         assert!(r.is_dir());
         assert!(!r.is_file());
@@ -384,6 +468,8 @@ mod tests {
             mode: 0o644,
             uid: 0,
             gid: 0,
+            mtime: 0,
+            ctime: 0,
         };
         assert_eq!(r.content(), Some([0u8, 0xFF].as_slice()));
         assert_eq!(r.content_str(), None);
@@ -396,6 +482,8 @@ mod tests {
             mode: 0o000,
             uid: 0,
             gid: 0,
+            mtime: 0,
+            ctime: 0,
         };
         assert!(!r.is_readable());
         assert!(!r.is_writable());
@@ -410,6 +498,8 @@ mod tests {
             mode: 0o644,
             uid: 42,
             gid: 99,
+            mtime: 0,
+            ctime: 0,
         };
         assert_eq!(r.uid(), 42);
         assert_eq!(r.gid(), 99);
@@ -418,6 +508,8 @@ mod tests {
             mode: 0o755,
             uid: 1,
             gid: 2,
+            mtime: 0,
+            ctime: 0,
         };
         assert_eq!(d.uid(), 1);
         assert_eq!(d.gid(), 2);
@@ -426,6 +518,8 @@ mod tests {
             target: "/foo",
             uid: 500,
             gid: 500,
+            mtime: 0,
+            ctime: 0,
         };
         assert_eq!(s.uid(), 500);
         assert_eq!(s.gid(), 500);

@@ -36,6 +36,9 @@ impl fmt::Display for VfsError {
     }
 }
 
+#[cfg(feature = "std")]
+impl std::error::Error for VfsError {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -7,10 +7,20 @@ pub struct Metadata {
     mode: u16,
     uid: u32,
     gid: u32,
+    mtime: u64,
+    ctime: u64,
 }
 
 impl Metadata {
-    pub(crate) fn new(is_file: bool, size: usize, mode: u16, uid: u32, gid: u32) -> Self {
+    pub(crate) fn new(
+        is_file: bool,
+        size: usize,
+        mode: u16,
+        uid: u32,
+        gid: u32,
+        mtime: u64,
+        ctime: u64,
+    ) -> Self {
         Metadata {
             is_file,
             is_symlink: false,
@@ -18,10 +28,12 @@ impl Metadata {
             mode,
             uid,
             gid,
+            mtime,
+            ctime,
         }
     }
 
-    pub(crate) fn new_symlink(mode: u16, uid: u32, gid: u32) -> Self {
+    pub(crate) fn new_symlink(mode: u16, uid: u32, gid: u32, mtime: u64, ctime: u64) -> Self {
         Metadata {
             is_file: false,
             is_symlink: true,
@@ -29,6 +41,8 @@ impl Metadata {
             mode,
             uid,
             gid,
+            mtime,
+            ctime,
         }
     }
 
@@ -86,6 +100,16 @@ impl Metadata {
     pub fn gid(&self) -> u32 {
         self.gid
     }
+
+    /// Returns the last modification time (monotonic counter).
+    pub fn mtime(&self) -> u64 {
+        self.mtime
+    }
+
+    /// Returns the last metadata change time (monotonic counter).
+    pub fn ctime(&self) -> u64 {
+        self.ctime
+    }
 }
 
 #[cfg(test)]
@@ -94,7 +118,7 @@ mod tests {
 
     #[test]
     fn file_metadata() {
-        let m = Metadata::new(true, 5, 0o755, 0, 0);
+        let m = Metadata::new(true, 5, 0o755, 0, 0, 10, 20);
         assert!(m.is_file());
         assert!(!m.is_dir());
         assert_eq!(m.len(), 5);
@@ -105,11 +129,13 @@ mod tests {
         assert!(m.is_executable());
         assert_eq!(m.uid(), 0);
         assert_eq!(m.gid(), 0);
+        assert_eq!(m.mtime(), 10);
+        assert_eq!(m.ctime(), 20);
     }
 
     #[test]
     fn dir_metadata() {
-        let m = Metadata::new(false, 0, 0o500, 1000, 1000);
+        let m = Metadata::new(false, 0, 0o500, 1000, 1000, 5, 5);
         assert!(m.is_dir());
         assert!(!m.is_file());
         assert_eq!(m.len(), 0);
@@ -120,5 +146,7 @@ mod tests {
         assert!(m.is_executable());
         assert_eq!(m.uid(), 1000);
         assert_eq!(m.gid(), 1000);
+        assert_eq!(m.mtime(), 5);
+        assert_eq!(m.ctime(), 5);
     }
 }

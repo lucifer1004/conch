@@ -6,6 +6,7 @@ description = "A minimal, synchronous, in-memory virtual filesystem for no_std a
 license = "MIT OR Apache-2.0"
 keywords = ["vfs", "filesystem", "wasm", "no_std", "virtual"]
 categories = ["filesystem", "no-std", "wasm"]
+include = ["src/**", "README.md", "LICENSE-*"]
 
 [features]
 default = []

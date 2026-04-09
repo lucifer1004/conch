@@ -22,17 +22,23 @@ pub(crate) enum TreeNode {
         mode: u16,
         uid: u32,
         gid: u32,
+        mtime: u64,
+        ctime: u64,
     },
     Dir {
         mode: u16,
         children: BTreeMap<String, TreeNode>,
         uid: u32,
         gid: u32,
+        mtime: u64,
+        ctime: u64,
     },
     Symlink {
         target: String,
         uid: u32,
         gid: u32,
+        mtime: u64,
+        ctime: u64,
     },
 }
 
@@ -72,6 +78,14 @@ impl TreeNode {
         }
     }
 
+    fn mtime(&self) -> u64 {
+        match self {
+            TreeNode::File { mtime, .. }
+            | TreeNode::Dir { mtime, .. }
+            | TreeNode::Symlink { mtime, .. } => *mtime,
+        }
+    }
+
     fn as_entry_ref(&self) -> EntryRef<'_> {
         match self {
             TreeNode::File {
@@ -79,21 +93,42 @@ impl TreeNode {
                 mode,
                 uid,
                 gid,
+                mtime,
+                ctime,
             } => EntryRef::File {
                 content,
                 mode: *mode,
                 uid: *uid,
                 gid: *gid,
+                mtime: *mtime,
+                ctime: *ctime,
             },
-            TreeNode::Dir { mode, uid, gid, .. } => EntryRef::Dir {
+            TreeNode::Dir {
+                mode,
+                uid,
+                gid,
+                mtime,
+                ctime,
+                ..
+            } => EntryRef::Dir {
                 mode: *mode,
                 uid: *uid,
                 gid: *gid,
+                mtime: *mtime,
+                ctime: *ctime,
             },
-            TreeNode::Symlink { target, uid, gid } => EntryRef::Symlink {
+            TreeNode::Symlink {
+                target,
+                uid,
+                gid,
+                mtime,
+                ctime,
+            } => EntryRef::Symlink {
                 target,
                 uid: *uid,
                 gid: *gid,
+                mtime: *mtime,
+                ctime: *ctime,
             },
         }
     }
@@ -105,9 +140,24 @@ impl TreeNode {
                 mode,
                 uid,
                 gid,
-            } => Metadata::new(true, content.len(), *mode, *uid, *gid),
-            TreeNode::Dir { mode, uid, gid, .. } => Metadata::new(false, 0, *mode, *uid, *gid),
-            TreeNode::Symlink { uid, gid, .. } => Metadata::new_symlink(0o777, *uid, *gid),
+                mtime,
+                ctime,
+            } => Metadata::new(true, content.len(), *mode, *uid, *gid, *mtime, *ctime),
+            TreeNode::Dir {
+                mode,
+                uid,
+                gid,
+                mtime,
+                ctime,
+                ..
+            } => Metadata::new(false, 0, *mode, *uid, *gid, *mtime, *ctime),
+            TreeNode::Symlink {
+                uid,
+                gid,
+                mtime,
+                ctime,
+                ..
+            } => Metadata::new_symlink(0o777, *uid, *gid, *mtime, *ctime),
         }
     }
 
@@ -122,6 +172,46 @@ impl TreeNode {
                     alloc::format!("{}/{}", prefix, name)
                 };
                 child.collect_paths(&child_path, out);
+            }
+        }
+    }
+
+    /// Pretty-print the tree for Display.
+    fn fmt_tree(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        name: &str,
+        prefix: &str,
+        is_last: bool,
+    ) -> fmt::Result {
+        let connector = if is_last { "└── " } else { "├── " };
+        let suffix = if self.is_dir() { "/" } else { "" };
+        writeln!(f, "{}{}{}{}", prefix, connector, name, suffix)?;
+        if let TreeNode::Dir { children, .. } = self {
+            let child_prefix = if is_last {
+                alloc::format!("{}    ", prefix)
+            } else {
+                alloc::format!("{}│   ", prefix)
+            };
+            let count = children.len();
+            for (i, (child_name, child)) in children.iter().enumerate() {
+                child.fmt_tree(f, child_name, &child_prefix, i == count - 1)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Collect all `(path, EntryRef)` pairs via DFS.
+    fn collect_entries<'a>(&'a self, prefix: &str, out: &mut Vec<(String, EntryRef<'a>)>) {
+        out.push((prefix.to_string(), self.as_entry_ref()));
+        if let TreeNode::Dir { children, .. } = self {
+            for (name, child) in children {
+                let child_path = if prefix == "/" {
+                    alloc::format!("/{}", name)
+                } else {
+                    alloc::format!("{}/{}", prefix, name)
+                };
+                child.collect_entries(&child_path, out);
             }
         }
     }
@@ -152,6 +242,8 @@ pub struct MemFs {
     current_uid: u32,
     current_gid: u32,
     supplementary_gids: Vec<u32>,
+    time: u64,
+    umask: u16,
 }
 
 impl MemFs {
@@ -164,11 +256,51 @@ impl MemFs {
                 children: BTreeMap::new(),
                 uid: 0,
                 gid: 0,
+                mtime: 0,
+                ctime: 0,
             },
             current_uid: 0,
             current_gid: 0,
             supplementary_gids: Vec::new(),
+            time: 0,
+            umask: 0o022,
         }
+    }
+
+    /// Advance the internal clock and return the new timestamp.
+    /// Called once per mutation; the returned value is used for all
+    /// timestamps set within that operation.
+    fn tick(&mut self) -> u64 {
+        self.time += 1;
+        self.time
+    }
+
+    /// Override the internal clock value. Useful for injecting real
+    /// timestamps from an external source.
+    pub fn set_time(&mut self, t: u64) {
+        self.time = t;
+    }
+
+    /// Returns the current internal clock value.
+    pub fn time(&self) -> u64 {
+        self.time
+    }
+
+    /// Set the file-creation mask. Returns the previous umask value.
+    pub fn set_umask(&mut self, mask: u16) -> u16 {
+        let old = self.umask;
+        self.umask = mask;
+        old
+    }
+
+    /// Returns the current file-creation mask.
+    pub fn umask(&self) -> u16 {
+        self.umask
+    }
+
+    /// Apply the current umask to a requested permission mode.
+    fn effective_mode(&self, requested: u16) -> u16 {
+        requested & !self.umask
     }
 
     /// Set the current user identity for permission checks.
@@ -195,32 +327,39 @@ impl MemFs {
     /// Change the owner of a file or directory.
     /// Follows symlinks (changes ownership of the target, not the symlink).
     pub fn chown(&mut self, path: &str, uid: u32, gid: u32) -> Result<(), VfsError> {
+        let now = self.tick();
         match self.traverse_mut(path) {
             Some(TreeNode::File {
                 uid: node_uid,
                 gid: node_gid,
+                ctime,
                 ..
             }) => {
                 *node_uid = uid;
                 *node_gid = gid;
+                *ctime = now;
                 Ok(())
             }
             Some(TreeNode::Dir {
                 uid: node_uid,
                 gid: node_gid,
+                ctime,
                 ..
             }) => {
                 *node_uid = uid;
                 *node_gid = gid;
+                *ctime = now;
                 Ok(())
             }
             Some(TreeNode::Symlink {
                 uid: node_uid,
                 gid: node_gid,
+                ctime,
                 ..
             }) => {
                 *node_uid = uid;
                 *node_gid = gid;
+                *ctime = now;
                 Ok(())
             }
             None => Err(VfsError::NotFound),
@@ -694,7 +833,9 @@ impl MemFs {
                     .map(|(name, node)| DirEntry {
                         name: name.clone(),
                         is_dir: node.is_dir(),
+                        is_symlink: node.is_symlink(),
                         mode: node.mode(),
+                        mtime: node.mtime(),
                     })
                     .collect())
             }
@@ -725,6 +866,34 @@ impl MemFs {
             .collect()
     }
 
+    /// Collect all paths under `path` via DFS. Returns an empty vec if
+    /// `path` does not exist.
+    pub fn paths_prefix(&self, path: &str) -> Vec<String> {
+        let normalized = crate::normalize(path);
+        match self.traverse(&normalized) {
+            Some(node) => {
+                let mut out = Vec::new();
+                node.collect_paths(&normalized, &mut out);
+                out
+            }
+            None => Vec::new(),
+        }
+    }
+
+    /// Collect all `(path, entry_ref)` pairs under `path` via DFS.
+    /// Returns an empty vec if `path` does not exist.
+    pub fn iter_prefix(&self, path: &str) -> Vec<(String, EntryRef<'_>)> {
+        let normalized = crate::normalize(path);
+        match self.traverse(&normalized) {
+            Some(node) => {
+                let mut out = Vec::new();
+                node.collect_entries(&normalized, &mut out);
+                out
+            }
+            None => Vec::new(),
+        }
+    }
+
     // -- Mutations ----------------------------------------------------------
 
     /// Insert an entry at the given path.
@@ -732,25 +901,39 @@ impl MemFs {
     /// This is a low-level method; it does **not** create parent directories.
     /// Panics if the parent directory does not exist.
     pub fn insert(&mut self, path: String, entry: Entry) {
+        let now = self.tick();
         let node = match entry {
             Entry::File {
                 content,
                 mode,
                 uid,
                 gid,
+                ..
             } => TreeNode::File {
                 content,
                 mode,
                 uid,
                 gid,
+                mtime: now,
+                ctime: now,
             },
-            Entry::Dir { mode, uid, gid } => TreeNode::Dir {
+            Entry::Dir { mode, uid, gid, .. } => TreeNode::Dir {
                 mode,
                 children: BTreeMap::new(),
                 uid,
                 gid,
+                mtime: now,
+                ctime: now,
             },
-            Entry::Symlink { target, uid, gid } => TreeNode::Symlink { target, uid, gid },
+            Entry::Symlink {
+                target, uid, gid, ..
+            } => TreeNode::Symlink {
+                target,
+                uid,
+                gid,
+                mtime: now,
+                ctime: now,
+            },
         };
         if path == "/" {
             self.root = node;
@@ -779,14 +962,43 @@ impl MemFs {
                 mode,
                 uid,
                 gid,
+                mtime,
+                ctime,
             } => Entry::File {
                 content,
                 mode,
                 uid,
                 gid,
+                mtime,
+                ctime,
             },
-            TreeNode::Dir { mode, uid, gid, .. } => Entry::Dir { mode, uid, gid },
-            TreeNode::Symlink { target, uid, gid } => Entry::Symlink { target, uid, gid },
+            TreeNode::Dir {
+                mode,
+                uid,
+                gid,
+                mtime,
+                ctime,
+                ..
+            } => Entry::Dir {
+                mode,
+                uid,
+                gid,
+                mtime,
+                ctime,
+            },
+            TreeNode::Symlink {
+                target,
+                uid,
+                gid,
+                mtime,
+                ctime,
+            } => Entry::Symlink {
+                target,
+                uid,
+                gid,
+                mtime,
+                ctime,
+            },
         })
     }
 
@@ -799,6 +1011,7 @@ impl MemFs {
         if !self.is_dir(parent) {
             return Err(VfsError::NotFound);
         }
+        let now = self.tick();
         let link_path_owned = link_path.to_string();
         let uid = self.current_uid;
         let gid = self.current_gid;
@@ -811,31 +1024,39 @@ impl MemFs {
                 target: target.to_string(),
                 uid,
                 gid,
+                mtime: now,
+                ctime: now,
             },
         );
         Ok(())
     }
 
-    /// Write a file with default permissions (`0o644`). Overwrites if it exists.
+    /// Write a file with default permissions (`0o644`), masked by umask. Overwrites if it exists.
     pub fn write(&mut self, path: &str, content: impl Into<Vec<u8>>) {
+        let now = self.tick();
         let node = TreeNode::File {
             content: content.into(),
-            mode: 0o644,
+            mode: self.effective_mode(0o644),
             uid: self.current_uid,
             gid: self.current_gid,
+            mtime: now,
+            ctime: now,
         };
         if let Some((children, name)) = self.traverse_parent_mut(path) {
             children.insert(name.to_string(), node);
         }
     }
 
-    /// Write a file with explicit permissions. Overwrites if it exists.
+    /// Write a file with explicit permissions (masked by umask). Overwrites if it exists.
     pub fn write_with_mode(&mut self, path: &str, content: impl Into<Vec<u8>>, mode: u16) {
+        let now = self.tick();
         let node = TreeNode::File {
             content: content.into(),
-            mode,
+            mode: self.effective_mode(mode),
             uid: self.current_uid,
             gid: self.current_gid,
+            mtime: now,
+            ctime: now,
         };
         if let Some((children, name)) = self.traverse_parent_mut(path) {
             children.insert(name.to_string(), node);
@@ -859,10 +1080,18 @@ impl MemFs {
             None => Err(VfsError::NotFound),
         };
         allowed?;
+        let now = self.tick();
         // Now do the mutable borrow to extend
         match self.traverse_mut(path) {
-            Some(TreeNode::File { content, .. }) => {
+            Some(TreeNode::File {
+                content,
+                mtime,
+                ctime,
+                ..
+            }) => {
                 content.extend_from_slice(data);
+                *mtime = now;
+                *ctime = now;
                 Ok(())
             }
             _ => Err(VfsError::NotFound),
@@ -878,16 +1107,20 @@ impl MemFs {
         if !self.is_dir(parent) {
             return Err(VfsError::NotFound);
         }
+        let now = self.tick();
+        let dir_mode = self.effective_mode(0o755);
         let uid = self.current_uid;
         let gid = self.current_gid;
         let (children, name) = self.traverse_parent_mut(path).ok_or(VfsError::NotFound)?;
         children.insert(
             name.to_string(),
             TreeNode::Dir {
-                mode: 0o755,
+                mode: dir_mode,
                 children: BTreeMap::new(),
                 uid,
                 gid,
+                mtime: now,
+                ctime: now,
             },
         );
         Ok(())
@@ -895,6 +1128,8 @@ impl MemFs {
 
     /// Create a directory and all missing ancestors.
     pub fn create_dir_all(&mut self, path: &str) {
+        let now = self.tick();
+        let dir_mode = self.effective_mode(0o755);
         let uid = self.current_uid;
         let gid = self.current_gid;
         let components = split_path(path);
@@ -908,17 +1143,30 @@ impl MemFs {
             node = children
                 .entry(component.to_string())
                 .or_insert_with(|| TreeNode::Dir {
-                    mode: 0o755,
+                    mode: dir_mode,
                     children: BTreeMap::new(),
                     uid,
                     gid,
+                    mtime: now,
+                    ctime: now,
                 });
         }
     }
 
     /// Create an empty file if `path` does not already exist.
+    /// If it already exists, updates `mtime` (like Unix `touch`).
     pub fn touch(&mut self, path: &str) {
-        if self.exists(path) {
+        let now = self.tick();
+        let file_mode = self.effective_mode(0o644);
+        // Update mtime if entry already exists
+        if let Some(node) = self.traverse_mut(path) {
+            match node {
+                TreeNode::File { mtime, .. }
+                | TreeNode::Dir { mtime, .. }
+                | TreeNode::Symlink { mtime, .. } => {
+                    *mtime = now;
+                }
+            }
             return;
         }
         let uid = self.current_uid;
@@ -928,9 +1176,11 @@ impl MemFs {
                 .entry(name.to_string())
                 .or_insert_with(|| TreeNode::File {
                     content: Vec::new(),
-                    mode: 0o644,
+                    mode: file_mode,
                     uid,
                     gid,
+                    mtime: now,
+                    ctime: now,
                 });
         }
     }
@@ -959,10 +1209,18 @@ impl MemFs {
     /// Set the permission mode on an existing entry.
     /// Follows symlinks (sets mode on the target, not the symlink).
     pub fn set_mode(&mut self, path: &str, mode: u16) -> Result<(), VfsError> {
+        let now = self.tick();
         match self.traverse_mut(path) {
             Some(node) => {
                 if let Some(m) = node.mode_mut() {
                     *m = mode;
+                }
+                match node {
+                    TreeNode::File { ctime, .. }
+                    | TreeNode::Dir { ctime, .. }
+                    | TreeNode::Symlink { ctime, .. } => {
+                        *ctime = now;
+                    }
                 }
                 Ok(())
             }
@@ -984,11 +1242,14 @@ impl MemFs {
             Some(TreeNode::Symlink { .. }) => return Err(VfsError::NotFound), // dangling
             None => return Err(VfsError::NotFound),
         };
+        let now = self.tick();
         let node = TreeNode::File {
             content,
-            mode: 0o644,
+            mode: self.effective_mode(0o644),
             uid: self.current_uid,
             gid: self.current_gid,
+            mtime: now,
+            ctime: now,
         };
         if let Some((children, name)) = self.traverse_parent_mut(dst) {
             children.insert(name.to_string(), node);
@@ -997,6 +1258,47 @@ impl MemFs {
     }
 
     /// Move (rename) an entry from `src` to `dst`.
+    /// Truncate or extend a file to `len` bytes. Zero-fills if extending.
+    /// Checks write permission. Follows symlinks.
+    pub fn truncate(&mut self, path: &str, len: usize) -> Result<(), VfsError> {
+        let allowed = match self.traverse(path) {
+            Some(node @ TreeNode::File { .. }) => {
+                if self.check_permission(node, 2) {
+                    Ok(())
+                } else {
+                    Err(VfsError::PermissionDenied)
+                }
+            }
+            Some(TreeNode::Dir { .. }) => Err(VfsError::IsADirectory),
+            _ => Err(VfsError::NotFound),
+        };
+        allowed?;
+        let now = self.tick();
+        match self.traverse_mut(path) {
+            Some(TreeNode::File {
+                content,
+                mtime,
+                ctime,
+                ..
+            }) => {
+                content.resize(len, 0u8);
+                *mtime = now;
+                *ctime = now;
+                Ok(())
+            }
+            _ => Err(VfsError::NotFound),
+        }
+    }
+
+    /// Returns `true` if `path` is a directory with no children.
+    /// Returns `false` for files, symlinks, missing paths, or non-empty directories.
+    pub fn is_empty_dir(&self, path: &str) -> bool {
+        match self.traverse(path) {
+            Some(TreeNode::Dir { children, .. }) => children.is_empty(),
+            _ => false,
+        }
+    }
+
     pub fn rename(&mut self, src: &str, dst: &str) -> Result<(), VfsError> {
         if src == "/" || dst == "/" {
             return Err(VfsError::PermissionDenied);
@@ -1037,6 +1339,19 @@ impl Default for MemFs {
 impl fmt::Debug for MemFs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MemFs").finish_non_exhaustive()
+    }
+}
+
+impl fmt::Display for MemFs {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "/")?;
+        if let TreeNode::Dir { children, .. } = &self.root {
+            let count = children.len();
+            for (i, (name, child)) in children.iter().enumerate() {
+                child.fmt_tree(f, name, "", i == count - 1)?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -2189,5 +2504,441 @@ mod tests {
         fs.set_current_user(500, 600);
         assert_eq!(fs.current_uid(), 500);
         assert_eq!(fs.current_gid(), 600);
+    }
+
+    // -- Timestamp tests ----------------------------------------------------
+
+    #[test]
+    fn timestamps_default_zero() {
+        let fs = MemFs::new();
+        assert_eq!(fs.time(), 0);
+        let meta = fs.metadata("/").unwrap();
+        assert_eq!(meta.mtime(), 0);
+        assert_eq!(meta.ctime(), 0);
+    }
+
+    #[test]
+    fn timestamps_tick_on_write() {
+        let mut fs = MemFs::new();
+        fs.write("/a", "hello");
+        assert_eq!(fs.time(), 1);
+        let meta = fs.metadata("/a").unwrap();
+        assert_eq!(meta.mtime(), 1);
+        assert_eq!(meta.ctime(), 1);
+
+        fs.write("/b", "world");
+        assert_eq!(fs.time(), 2);
+        let meta = fs.metadata("/b").unwrap();
+        assert_eq!(meta.mtime(), 2);
+        assert_eq!(meta.ctime(), 2);
+    }
+
+    #[test]
+    fn timestamps_set_time_override() {
+        let mut fs = MemFs::new();
+        fs.set_time(1000);
+        fs.write("/a", "hello");
+        assert_eq!(fs.time(), 1001);
+        let meta = fs.metadata("/a").unwrap();
+        assert_eq!(meta.mtime(), 1001);
+    }
+
+    #[test]
+    fn timestamps_append_updates_mtime() {
+        let mut fs = MemFs::new();
+        fs.write("/a", "hello");
+        let t1 = fs.metadata("/a").unwrap().mtime();
+        fs.append("/a", b" world").unwrap();
+        let meta = fs.metadata("/a").unwrap();
+        assert!(meta.mtime() > t1);
+        assert!(meta.ctime() > t1);
+    }
+
+    #[test]
+    fn timestamps_touch_updates_existing_mtime() {
+        let mut fs = MemFs::new();
+        fs.write("/a", "hello");
+        let t1 = fs.metadata("/a").unwrap().mtime();
+        fs.touch("/a");
+        let t2 = fs.metadata("/a").unwrap().mtime();
+        assert!(t2 > t1);
+        // Content unchanged
+        assert_eq!(fs.read_to_string("/a").unwrap(), "hello");
+    }
+
+    #[test]
+    fn timestamps_touch_creates_with_timestamps() {
+        let mut fs = MemFs::new();
+        fs.touch("/new");
+        let meta = fs.metadata("/new").unwrap();
+        assert!(meta.mtime() > 0);
+        assert!(meta.ctime() > 0);
+    }
+
+    #[test]
+    fn timestamps_set_mode_only_updates_ctime() {
+        let mut fs = MemFs::new();
+        fs.write("/a", "hello");
+        let m = fs.metadata("/a").unwrap();
+        let orig_mtime = m.mtime();
+        let orig_ctime = m.ctime();
+        fs.set_mode("/a", 0o755).unwrap();
+        let m2 = fs.metadata("/a").unwrap();
+        assert_eq!(m2.mtime(), orig_mtime); // mtime unchanged
+        assert!(m2.ctime() > orig_ctime); // ctime updated
+    }
+
+    #[test]
+    fn timestamps_chown_only_updates_ctime() {
+        let mut fs = MemFs::new();
+        fs.write("/a", "hello");
+        let m = fs.metadata("/a").unwrap();
+        let orig_mtime = m.mtime();
+        let orig_ctime = m.ctime();
+        fs.chown("/a", 1000, 1000).unwrap();
+        let m2 = fs.metadata("/a").unwrap();
+        assert_eq!(m2.mtime(), orig_mtime);
+        assert!(m2.ctime() > orig_ctime);
+    }
+
+    #[test]
+    fn timestamps_rename_preserves() {
+        let mut fs = MemFs::new();
+        fs.write("/a", "hello");
+        let m = fs.metadata("/a").unwrap();
+        let orig_mtime = m.mtime();
+        let orig_ctime = m.ctime();
+        fs.rename("/a", "/b").unwrap();
+        let m2 = fs.metadata("/b").unwrap();
+        assert_eq!(m2.mtime(), orig_mtime);
+        assert_eq!(m2.ctime(), orig_ctime);
+    }
+
+    #[test]
+    fn timestamps_copy_gets_new_timestamps() {
+        let mut fs = MemFs::new();
+        fs.write("/a", "hello");
+        let src_time = fs.metadata("/a").unwrap().mtime();
+        fs.copy("/a", "/b").unwrap();
+        let dst_time = fs.metadata("/b").unwrap().mtime();
+        assert!(dst_time > src_time);
+    }
+
+    #[test]
+    fn timestamps_create_dir() {
+        let mut fs = MemFs::new();
+        fs.create_dir("/d").unwrap();
+        let meta = fs.metadata("/d").unwrap();
+        assert!(meta.mtime() > 0);
+        assert_eq!(meta.mtime(), meta.ctime());
+    }
+
+    #[test]
+    fn timestamps_symlink() {
+        let mut fs = MemFs::new();
+        fs.write("/target", "x");
+        fs.symlink("/target", "/link").unwrap();
+        let meta = fs.symlink_metadata("/link").unwrap();
+        assert!(meta.mtime() > 0);
+    }
+
+    #[test]
+    fn timestamps_ordering() {
+        let mut fs = MemFs::new();
+        fs.write("/first", "a");
+        fs.write("/second", "b");
+        fs.write("/third", "c");
+        let t1 = fs.metadata("/first").unwrap().mtime();
+        let t2 = fs.metadata("/second").unwrap().mtime();
+        let t3 = fs.metadata("/third").unwrap().mtime();
+        assert!(t1 < t2);
+        assert!(t2 < t3);
+    }
+
+    #[test]
+    fn timestamps_in_dir_entry() {
+        let mut fs = MemFs::new();
+        fs.write("/a", "hello");
+        let entries = fs.read_dir("/").unwrap();
+        let e = &entries[0];
+        assert_eq!(e.name, "a");
+        assert!(e.mtime > 0);
+    }
+
+    // -- Umask tests ---------------------------------------------------------
+
+    // -- Display tests --------------------------------------------------------
+
+    #[test]
+    fn display_empty_fs() {
+        let fs = MemFs::new();
+        let out = alloc::format!("{}", fs);
+        assert!(out.contains("/"));
+    }
+
+    #[test]
+    fn display_nested_tree() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/a/b");
+        fs.write("/a/b/f.txt", "x");
+        fs.write("/z.txt", "y");
+        let out = alloc::format!("{}", fs);
+        assert!(out.contains("a/"));
+        assert!(out.contains("b/"));
+        assert!(out.contains("f.txt"));
+        assert!(out.contains("z.txt"));
+        assert!(out.contains("├── ") || out.contains("└── "));
+    }
+
+    // -- Subtree iteration tests ----------------------------------------------
+
+    #[test]
+    fn iter_prefix_subtree() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/a/b/c");
+        fs.write("/a/b/f.txt", "x");
+        fs.write("/other", "y");
+        let entries = fs.iter_prefix("/a");
+        let paths: Vec<&str> = entries.iter().map(|(p, _)| p.as_str()).collect();
+        assert!(paths.contains(&"/a"));
+        assert!(paths.contains(&"/a/b"));
+        assert!(paths.contains(&"/a/b/c"));
+        assert!(paths.contains(&"/a/b/f.txt"));
+        assert!(!paths.contains(&"/other"));
+    }
+
+    #[test]
+    fn iter_prefix_root_equals_iter() {
+        let mut fs = MemFs::new();
+        fs.write("/a", "x");
+        fs.create_dir("/d").unwrap();
+        let all = fs.iter();
+        let root = fs.iter_prefix("/");
+        assert_eq!(all.len(), root.len());
+    }
+
+    #[test]
+    fn iter_prefix_single_file() {
+        let mut fs = MemFs::new();
+        fs.write("/f", "hello");
+        let entries = fs.iter_prefix("/f");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "/f");
+    }
+
+    #[test]
+    fn iter_prefix_missing() {
+        let fs = MemFs::new();
+        assert!(fs.iter_prefix("/nope").is_empty());
+    }
+
+    #[test]
+    fn paths_prefix_subtree() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/x/y");
+        fs.write("/x/y/z", "data");
+        fs.write("/other", "data");
+        let paths = fs.paths_prefix("/x");
+        assert_eq!(paths, vec!["/x", "/x/y", "/x/y/z"]);
+    }
+
+    // -- DirEntry symlink tests ----------------------------------------------
+
+    #[test]
+    fn dir_entry_symlink_flag() {
+        let mut fs = MemFs::new();
+        fs.write("/file", "x");
+        fs.create_dir("/dir").unwrap();
+        fs.symlink("/file", "/link").unwrap();
+        let entries = fs.read_dir("/").unwrap();
+        let dir_e = entries.iter().find(|e| e.name == "dir").unwrap();
+        let file_e = entries.iter().find(|e| e.name == "file").unwrap();
+        let link_e = entries.iter().find(|e| e.name == "link").unwrap();
+        assert!(!dir_e.is_symlink);
+        assert!(!file_e.is_symlink);
+        assert!(link_e.is_symlink);
+        assert!(!link_e.is_dir);
+    }
+
+    // -- Truncate tests -----------------------------------------------------
+
+    #[test]
+    fn truncate_shorter() {
+        let mut fs = MemFs::new();
+        fs.write("/a", "hello world");
+        fs.truncate("/a", 5).unwrap();
+        assert_eq!(fs.read_to_string("/a").unwrap(), "hello");
+    }
+
+    #[test]
+    fn truncate_longer_zero_fills() {
+        let mut fs = MemFs::new();
+        fs.write("/a", "hi");
+        fs.truncate("/a", 5).unwrap();
+        let bytes = fs.read("/a").unwrap();
+        assert_eq!(bytes, &[b'h', b'i', 0, 0, 0]);
+    }
+
+    #[test]
+    fn truncate_to_zero() {
+        let mut fs = MemFs::new();
+        fs.write("/a", "data");
+        fs.truncate("/a", 0).unwrap();
+        assert_eq!(fs.read("/a").unwrap(), &[]);
+    }
+
+    #[test]
+    fn truncate_missing() {
+        let mut fs = MemFs::new();
+        assert!(matches!(fs.truncate("/x", 0), Err(VfsError::NotFound)));
+    }
+
+    #[test]
+    fn truncate_directory() {
+        let mut fs = MemFs::new();
+        fs.create_dir("/d").unwrap();
+        assert!(matches!(fs.truncate("/d", 0), Err(VfsError::IsADirectory)));
+    }
+
+    #[test]
+    fn truncate_permission_denied() {
+        let mut fs = MemFs::new();
+        fs.write_with_mode("/a", "data", 0o444);
+        fs.set_current_user(1000, 1000);
+        assert!(matches!(
+            fs.truncate("/a", 0),
+            Err(VfsError::PermissionDenied)
+        ));
+    }
+
+    #[test]
+    fn truncate_updates_timestamps() {
+        let mut fs = MemFs::new();
+        fs.write("/a", "hello");
+        let t1 = fs.metadata("/a").unwrap().mtime();
+        fs.truncate("/a", 3).unwrap();
+        let m = fs.metadata("/a").unwrap();
+        assert!(m.mtime() > t1);
+        assert!(m.ctime() > t1);
+    }
+
+    // -- is_empty_dir tests -------------------------------------------------
+
+    #[test]
+    fn is_empty_dir_empty() {
+        let mut fs = MemFs::new();
+        fs.create_dir("/d").unwrap();
+        assert!(fs.is_empty_dir("/d"));
+    }
+
+    #[test]
+    fn is_empty_dir_non_empty() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/d/sub");
+        assert!(!fs.is_empty_dir("/d"));
+    }
+
+    #[test]
+    fn is_empty_dir_file() {
+        let mut fs = MemFs::new();
+        fs.write("/f", "x");
+        assert!(!fs.is_empty_dir("/f"));
+    }
+
+    #[test]
+    fn is_empty_dir_missing() {
+        let fs = MemFs::new();
+        assert!(!fs.is_empty_dir("/nope"));
+    }
+
+    #[test]
+    fn is_empty_dir_root_empty() {
+        let fs = MemFs::new();
+        assert!(fs.is_empty_dir("/"));
+    }
+
+    // -- Umask tests ---------------------------------------------------------
+
+    #[test]
+    fn umask_default_is_022() {
+        let fs = MemFs::new();
+        assert_eq!(fs.umask(), 0o022);
+    }
+
+    #[test]
+    fn umask_set_returns_old() {
+        let mut fs = MemFs::new();
+        let old = fs.set_umask(0o077);
+        assert_eq!(old, 0o022);
+        assert_eq!(fs.umask(), 0o077);
+    }
+
+    #[test]
+    fn umask_affects_write() {
+        let mut fs = MemFs::new();
+        fs.set_umask(0o077);
+        fs.write("/a", "hello");
+        assert_eq!(fs.metadata("/a").unwrap().mode(), 0o600);
+    }
+
+    #[test]
+    fn umask_affects_write_with_mode() {
+        let mut fs = MemFs::new();
+        fs.set_umask(0o077);
+        fs.write_with_mode("/a", "hello", 0o755);
+        assert_eq!(fs.metadata("/a").unwrap().mode(), 0o700);
+    }
+
+    #[test]
+    fn umask_affects_create_dir() {
+        let mut fs = MemFs::new();
+        fs.set_umask(0o077);
+        fs.create_dir("/d").unwrap();
+        assert_eq!(fs.metadata("/d").unwrap().mode(), 0o700);
+    }
+
+    #[test]
+    fn umask_affects_create_dir_all() {
+        let mut fs = MemFs::new();
+        fs.set_umask(0o077);
+        fs.create_dir_all("/a/b/c");
+        assert_eq!(fs.metadata("/a").unwrap().mode(), 0o700);
+        assert_eq!(fs.metadata("/a/b/c").unwrap().mode(), 0o700);
+    }
+
+    #[test]
+    fn umask_affects_touch() {
+        let mut fs = MemFs::new();
+        fs.set_umask(0o077);
+        fs.touch("/new");
+        assert_eq!(fs.metadata("/new").unwrap().mode(), 0o600);
+    }
+
+    #[test]
+    fn umask_affects_copy() {
+        let mut fs = MemFs::new();
+        fs.write("/src", "data");
+        fs.set_umask(0o077);
+        fs.copy("/src", "/dst").unwrap();
+        assert_eq!(fs.metadata("/dst").unwrap().mode(), 0o600);
+    }
+
+    #[test]
+    fn umask_default_preserves_644_755() {
+        // Default umask 0o022 doesn't change 0o644 or 0o755
+        let mut fs = MemFs::new();
+        fs.write("/f", "x");
+        assert_eq!(fs.metadata("/f").unwrap().mode(), 0o644);
+        fs.create_dir("/d").unwrap();
+        assert_eq!(fs.metadata("/d").unwrap().mode(), 0o755);
+    }
+
+    #[test]
+    fn timestamps_insert_sets_current_time() {
+        let mut fs = MemFs::new();
+        fs.set_time(100);
+        fs.insert("/x".to_string(), Entry::file("data"));
+        let meta = fs.metadata("/x").unwrap();
+        assert_eq!(meta.mtime(), 101);
     }
 }

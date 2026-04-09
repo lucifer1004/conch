@@ -7,6 +7,10 @@ pub struct DirEntry {
     pub name: String,
     /// `true` when the entry is a directory.
     pub is_dir: bool,
+    /// `true` when the entry is a symbolic link.
+    pub is_symlink: bool,
     /// Unix permission mode of the entry.
     pub mode: u16,
+    /// Last modification time (monotonic counter).
+    pub mtime: u64,
 }
