@@ -86,6 +86,7 @@ impl Shell {
                     .unwrap_or_else(|| format!("/home/{}", spec.name));
                 users_db.add_user_with_ids(&spec.name, uid, uid, &user_home);
                 fs.create_dir_all(&user_home);
+                fs.chown(&user_home, uid, uid).unwrap_or(());
             }
 
             // 4. Create groups from group specs
@@ -392,9 +393,23 @@ impl Shell {
         // Handle redirect
         if let Some(ref redir) = pipeline.redirect {
             let target = self.resolve(&self.expand(&redir.target));
-            // Check write permission on existing file
-            if let Some(e) = self.fs.get(&target) {
-                if !e.is_writable() {
+            // Check write permission: existing file needs write perm; new file needs parent dir write perm
+            if self.fs.exists(&target) {
+                if let Some(e) = self.fs.get(&target) {
+                    if !e.is_writable() {
+                        return (
+                            format!("conch: {}: Permission denied", redir.target),
+                            1,
+                            None,
+                        );
+                    }
+                }
+            } else {
+                let parent = target
+                    .rsplit_once('/')
+                    .map(|(p, _)| if p.is_empty() { "/" } else { p })
+                    .unwrap_or("/");
+                if self.fs.access(parent, bare_vfs::AccessMode::W_OK).is_err() {
                     return (
                         format!("conch: {}: Permission denied", redir.target),
                         1,

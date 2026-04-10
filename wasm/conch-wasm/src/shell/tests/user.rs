@@ -162,7 +162,7 @@ fn chown_accepts_username() {
     let mut s = shell();
     s.run_line("useradd henry");
     s.run_line("touch /home/u/file.txt");
-    let (out, code, _) = s.run_line("chown henry /home/u/file.txt");
+    let (out, code, _) = s.run_line("sudo chown henry /home/u/file.txt");
     assert_eq!(code, 0, "chown with username failed: {:?}", out);
     let henry = s.users.get_user_by_name("henry").unwrap();
     let henry_uid = henry.uid;

@@ -151,10 +151,6 @@ impl Shell {
             if parents {
                 self.mkdir_p(&path);
             } else {
-                let parent = path
-                    .rsplit_once('/')
-                    .map(|(p, _)| if p.is_empty() { "/" } else { p })
-                    .unwrap_or("/");
                 match self.fs.create_dir(&path) {
                     Ok(()) => {}
                     Err(_) => {
@@ -250,19 +246,28 @@ impl Shell {
             }
             _ => dst_path,
         };
-        self.fs.insert(target, FsEntry::file(content));
+        self.fs.write(&target, content.as_bytes());
         (String::new(), 0)
     }
 
     pub fn cmd_mv(&mut self, args: &[String]) -> (String, i32) {
-        let (out, code) = self.cmd_cp(args);
-        if code != 0 {
-            return (out.replace("cp:", "mv:"), code);
-        }
         let files: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
-        let src = self.resolve(files[0]);
-        self.fs.remove(&src);
-        (String::new(), 0)
+        if files.len() < 2 {
+            return ("mv: missing operand".into(), 1);
+        }
+        let src_path = self.resolve(files[0]);
+        let mut dst_path = self.resolve(files[1]);
+
+        // If destination is a directory, move into it
+        if self.fs.is_dir(&dst_path) {
+            let name = src_path.rsplit('/').next().unwrap_or(files[0]);
+            dst_path = format!("{}/{}", dst_path, name);
+        }
+
+        match self.fs.rename(&src_path, &dst_path) {
+            Ok(()) => (String::new(), 0),
+            Err(e) => (format!("mv: {}", e), 1),
+        }
     }
 
     pub fn cmd_find(&self, args: &[String]) -> (String, i32) {
@@ -385,26 +390,28 @@ impl Shell {
             Err(_) => return (format!("chmod: invalid mode: '{}'", mode_str), 1),
         };
 
-        // chmod requires owner or root; elevate to root for the operation
-        let saved_uid = self.fs.current_uid();
-        let saved_gid = self.fs.current_gid();
-        self.fs.set_current_user(0, 0);
-
-        let result = (|| {
-            for arg in &args[1..] {
-                let path = self.resolve(arg);
-                if self.fs.set_mode(&path, mode).is_err() {
+        for arg in &args[1..] {
+            let path = self.resolve(arg);
+            match self.fs.set_mode(&path, mode) {
+                Err(e) if *e.kind() == bare_vfs::VfsErrorKind::NotFound => {
                     return (
                         format!("chmod: cannot access '{}': No such file or directory", arg),
                         1,
                     );
                 }
+                Err(_) => {
+                    return (
+                        format!(
+                            "chmod: changing permissions of '{}': Operation not permitted",
+                            arg
+                        ),
+                        1,
+                    );
+                }
+                Ok(()) => {}
             }
-            (String::new(), 0)
-        })();
-
-        self.fs.set_current_user(saved_uid, saved_gid);
-        result
+        }
+        (String::new(), 0)
     }
 
     pub fn cmd_rmdir(&mut self, args: &[String]) -> (String, i32) {
@@ -555,18 +562,12 @@ impl Shell {
         let targets: Vec<String> = positional[1..].iter().map(|s| self.resolve(s)).collect();
         let orig_args: Vec<String> = positional[1..].to_vec();
 
-        // chown requires root; elevate for the operation
-        let saved_uid = self.fs.current_uid();
-        let saved_gid = self.fs.current_gid();
-        self.fs.set_current_user(0, 0);
-
-        let result = (|| {
-            for (path, orig) in targets.iter().zip(orig_args.iter()) {
-                if recursive && self.fs.is_dir(path) {
-                    let all_paths: Vec<String> =
-                        self.fs.walk_prefix(path).map(|(p, _)| p).collect();
-                    for p in all_paths {
-                        if self.fs.chown(&p, uid, gid).is_err() {
+        for (path, orig) in targets.iter().zip(orig_args.iter()) {
+            if recursive && self.fs.is_dir(path) {
+                let all_paths: Vec<String> = self.fs.walk_prefix(path).map(|(p, _)| p).collect();
+                for p in all_paths {
+                    match self.fs.chown(&p, uid, gid) {
+                        Err(e) if *e.kind() == bare_vfs::VfsErrorKind::NotFound => {
                             return (
                                 format!(
                                     "chown: cannot access '{}': No such file or directory",
@@ -575,19 +576,40 @@ impl Shell {
                                 1,
                             );
                         }
+                        Err(_) => {
+                            return (
+                                format!(
+                                    "chown: changing ownership of '{}': Operation not permitted",
+                                    orig
+                                ),
+                                1,
+                            );
+                        }
+                        Ok(()) => {}
                     }
-                } else if self.fs.chown(path, uid, gid).is_err() {
-                    return (
-                        format!("chown: cannot access '{}': No such file or directory", orig),
-                        1,
-                    );
+                }
+            } else {
+                match self.fs.chown(path, uid, gid) {
+                    Err(e) if *e.kind() == bare_vfs::VfsErrorKind::NotFound => {
+                        return (
+                            format!("chown: cannot access '{}': No such file or directory", orig),
+                            1,
+                        );
+                    }
+                    Err(_) => {
+                        return (
+                            format!(
+                                "chown: changing ownership of '{}': Operation not permitted",
+                                orig
+                            ),
+                            1,
+                        );
+                    }
+                    Ok(()) => {}
                 }
             }
-            (String::new(), 0)
-        })();
-
-        self.fs.set_current_user(saved_uid, saved_gid);
-        result
+        }
+        (String::new(), 0)
     }
 
     pub fn cmd_chgrp(&mut self, args: &[String]) -> (String, i32) {
@@ -619,19 +641,13 @@ impl Shell {
         let targets: Vec<String> = positional[1..].iter().map(|s| self.resolve(s)).collect();
         let orig_args: Vec<String> = positional[1..].to_vec();
 
-        // chgrp requires root; elevate for the operation
-        let saved_uid = self.fs.current_uid();
-        let saved_gid_fs = self.fs.current_gid();
-        self.fs.set_current_user(0, 0);
-
-        let result = (|| {
-            for (path, orig) in targets.iter().zip(orig_args.iter()) {
-                if recursive && self.fs.is_dir(path) {
-                    let all_paths: Vec<String> =
-                        self.fs.walk_prefix(path).map(|(p, _)| p).collect();
-                    for p in all_paths {
-                        let uid = self.fs.get(&p).map(|e| e.uid()).unwrap_or(0);
-                        if self.fs.chown(&p, uid, gid).is_err() {
+        for (path, orig) in targets.iter().zip(orig_args.iter()) {
+            if recursive && self.fs.is_dir(path) {
+                let all_paths: Vec<String> = self.fs.walk_prefix(path).map(|(p, _)| p).collect();
+                for p in all_paths {
+                    let uid = self.fs.get(&p).map(|e| e.uid()).unwrap_or(0);
+                    match self.fs.chown(&p, uid, gid) {
+                        Err(e) if *e.kind() == bare_vfs::VfsErrorKind::NotFound => {
                             return (
                                 format!(
                                     "chgrp: cannot access '{}': No such file or directory",
@@ -640,22 +656,41 @@ impl Shell {
                                 1,
                             );
                         }
+                        Err(_) => {
+                            return (
+                                format!(
+                                    "chgrp: changing group of '{}': Operation not permitted",
+                                    orig
+                                ),
+                                1,
+                            );
+                        }
+                        Ok(()) => {}
                     }
-                } else {
-                    let uid = self.fs.get(path).map(|e| e.uid()).unwrap_or(0);
-                    if self.fs.chown(path, uid, gid).is_err() {
+                }
+            } else {
+                let uid = self.fs.get(path).map(|e| e.uid()).unwrap_or(0);
+                match self.fs.chown(path, uid, gid) {
+                    Err(e) if *e.kind() == bare_vfs::VfsErrorKind::NotFound => {
                         return (
                             format!("chgrp: cannot access '{}': No such file or directory", orig),
                             1,
                         );
                     }
+                    Err(_) => {
+                        return (
+                            format!(
+                                "chgrp: changing group of '{}': Operation not permitted",
+                                orig
+                            ),
+                            1,
+                        );
+                    }
+                    Ok(()) => {}
                 }
             }
-            (String::new(), 0)
-        })();
-
-        self.fs.set_current_user(saved_uid, saved_gid_fs);
-        result
+        }
+        (String::new(), 0)
     }
 
     pub fn cmd_id(&self, _args: &[String]) -> (String, i32) {

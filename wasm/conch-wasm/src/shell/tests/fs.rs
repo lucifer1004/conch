@@ -405,7 +405,7 @@ fn mktemp_names_are_unique() {
 #[test]
 fn chown_changes_file_owner() {
     let mut s = shell_with_files(serde_json::json!({ "f.txt": "data" }));
-    let (_, code, _) = s.run_line("chown 500 f.txt");
+    let (_, code, _) = s.run_line("sudo chown 500 f.txt");
     assert_eq!(code, 0);
     let (stat_out, _, _) = s.run_line("stat f.txt");
     assert!(
@@ -418,7 +418,7 @@ fn chown_changes_file_owner() {
 #[test]
 fn chown_user_colon_group() {
     let mut s = shell_with_files(serde_json::json!({ "g.txt": "data" }));
-    let (_, code, _) = s.run_line("chown 42:99 g.txt");
+    let (_, code, _) = s.run_line("sudo chown 42:99 g.txt");
     assert_eq!(code, 0);
     let (stat_out, _, _) = s.run_line("stat g.txt");
     assert!(
@@ -436,7 +436,7 @@ fn chown_user_colon_group() {
 #[test]
 fn chgrp_changes_file_group() {
     let mut s = shell_with_files(serde_json::json!({ "h.txt": "data" }));
-    let (_, code, _) = s.run_line("chgrp 777 h.txt");
+    let (_, code, _) = s.run_line("sudo chgrp 777 h.txt");
     assert_eq!(code, 0);
     let (stat_out, _, _) = s.run_line("stat h.txt");
     assert!(
@@ -491,7 +491,7 @@ fn chown_recursive() {
     let mut s = shell();
     s.run_line("mkdir -p d/sub");
     s.run_line("touch d/sub/f.txt");
-    let (_, code, _) = s.run_line("chown -R 2000:2000 d");
+    let (_, code, _) = s.run_line("sudo chown -R 2000:2000 d");
     assert_eq!(code, 0);
     let (out, _, _) = s.run_line("stat d/sub/f.txt");
     assert!(out.contains("2000"), "got {:?}", out);
@@ -518,7 +518,7 @@ fn ln_s_intermediate_symlink() {
 #[test]
 fn chown_numeric_ids() {
     let mut s = shell_with_files(serde_json::json!({"f.txt": "x"}));
-    let (_, code, _) = s.run_line("chown 2000:3000 f.txt");
+    let (_, code, _) = s.run_line("sudo chown 2000:3000 f.txt");
     assert_eq!(code, 0);
     let (out, _, _) = s.run_line("stat f.txt");
     assert!(out.contains("2000"), "got {:?}", out);

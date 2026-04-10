@@ -122,8 +122,7 @@ impl Shell {
         if in_place {
             if let Some(ref f) = file {
                 let path = self.resolve(f);
-                self.fs
-                    .insert(path, crate::types::FsEntry::file(output.clone()));
+                self.fs.write(&path, output.as_bytes());
             }
         }
 
