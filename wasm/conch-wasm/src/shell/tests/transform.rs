@@ -152,7 +152,7 @@ fn xxd_binary_file() {
     let mut s = shell();
     s.run_line("printf '\\x00\\x01\\xff' > bin.dat");
     // The file should exist; xxd should show hex
-    let (out, code, _) = s.run_line("xxd bin.dat");
+    let (_out, code, _) = s.run_line("xxd bin.dat");
     // May or may not work depending on printf implementation
     // At minimum, xxd on any file should not panic
     assert!(code == 0 || code == 1);
@@ -191,7 +191,7 @@ fn diff_deleted_lines() {
 #[test]
 fn xxd_from_stdin() {
     let mut s = shell();
-    let (out, code, _) = s.run_line("echo hello | xxd");
+    let (_out, code, _) = s.run_line("echo hello | xxd");
     // xxd may or may not support stdin - check it doesn't panic
     // If it works, output should contain hex
     assert!(code == 0 || code == 1);

@@ -1,4 +1,4 @@
-/// ANSI escape code helpers for colored terminal output.
+//! ANSI escape code helpers for colored terminal output.
 
 pub const RESET: &str = "\x1b[0m";
 pub const BOLD: &str = "\x1b[1m";

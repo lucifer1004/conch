@@ -1,7 +1,9 @@
 use alloc::string::String;
 
 /// A single entry returned by [`crate::MemFs::read_dir`].
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DirEntry {
     /// File or directory name (no leading slash).
     pub name: String,
@@ -13,4 +15,6 @@ pub struct DirEntry {
     pub mode: u16,
     /// Last modification time (monotonic counter).
     pub mtime: u64,
+    /// Content size in bytes (0 for directories and symlinks).
+    pub size: usize,
 }

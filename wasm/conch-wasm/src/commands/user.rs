@@ -162,12 +162,10 @@ impl Shell {
                 if flags.contains('a') {
                     append = true;
                 }
-                if flags.contains('G') {
-                    if i + 1 < args.len() {
-                        groups = args[i + 1].split(',').map(|s| s.to_string()).collect();
-                        i += 2;
-                        continue;
-                    }
+                if flags.contains('G') && i + 1 < args.len() {
+                    groups = args[i + 1].split(',').map(|s| s.to_string()).collect();
+                    i += 2;
+                    continue;
                 }
                 i += 1;
             } else if !arg.starts_with('-') {

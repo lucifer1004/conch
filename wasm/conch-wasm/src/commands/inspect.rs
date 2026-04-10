@@ -101,7 +101,7 @@ impl Shell {
             }
             [flag, path] if flag.as_str() == "-s" => {
                 let p = self.resolve(path.as_str());
-                self.fs.metadata(&p).map(|m| m.len() > 0).unwrap_or(false)
+                self.fs.metadata(&p).map(|m| !m.is_empty()).unwrap_or(false)
             }
             [flag, s] if flag.as_str() == "-z" => s.is_empty(),
             [flag, s] if flag.as_str() == "-n" => !s.is_empty(),
@@ -164,7 +164,7 @@ impl Shell {
         let format_size = |bytes: usize| -> String {
             if !human {
                 // Report in 1K blocks (ceiling division)
-                let kb = (bytes + 1023) / 1024;
+                let kb = bytes.div_ceil(1024);
                 return kb.to_string();
             }
             if bytes >= 1024 * 1024 {
@@ -250,7 +250,7 @@ impl Shell {
             self.resolve(&args[0])
         };
 
-        if !self.fs.get(&root_path).map_or(false, |e| e.is_dir()) {
+        if !self.fs.get(&root_path).is_some_and(|e| e.is_dir()) {
             return (format!("tree: '{}': No such directory", display_arg), 1);
         }
 

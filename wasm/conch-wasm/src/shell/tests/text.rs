@@ -420,7 +420,7 @@ fn cut_range_fields() {
 #[test]
 fn tr_from_stdin_uppercase() {
     let mut s = shell();
-    let (out, code, _) = s.run_line("echo hello | tr a-z A-Z");
+    let (_out, code, _) = s.run_line("echo hello | tr a-z A-Z");
     assert_eq!(code, 0);
     // tr might not support ranges, but at least should not panic
     assert!(code == 0);

@@ -1,5 +1,6 @@
 /// File metadata returned by [`crate::MemFs::metadata`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Metadata {
     is_file: bool,
     is_symlink: bool,
@@ -9,9 +10,12 @@ pub struct Metadata {
     gid: u32,
     mtime: u64,
     ctime: u64,
+    atime: u64,
+    nlink: u64,
 }
 
 impl Metadata {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         is_file: bool,
         size: usize,
@@ -20,6 +24,7 @@ impl Metadata {
         gid: u32,
         mtime: u64,
         ctime: u64,
+        atime: u64,
     ) -> Self {
         Metadata {
             is_file,
@@ -30,10 +35,19 @@ impl Metadata {
             gid,
             mtime,
             ctime,
+            atime,
+            nlink: 1,
         }
     }
 
-    pub(crate) fn new_symlink(mode: u16, uid: u32, gid: u32, mtime: u64, ctime: u64) -> Self {
+    pub(crate) fn new_symlink(
+        mode: u16,
+        uid: u32,
+        gid: u32,
+        mtime: u64,
+        ctime: u64,
+        atime: u64,
+    ) -> Self {
         Metadata {
             is_file: false,
             is_symlink: true,
@@ -43,6 +57,8 @@ impl Metadata {
             gid,
             mtime,
             ctime,
+            atime,
+            nlink: 1,
         }
     }
 
@@ -110,6 +126,16 @@ impl Metadata {
     pub fn ctime(&self) -> u64 {
         self.ctime
     }
+
+    /// Returns the last access time (monotonic counter).
+    pub fn atime(&self) -> u64 {
+        self.atime
+    }
+
+    /// Returns the hard link count (always 1; no hard links in this VFS).
+    pub fn nlink(&self) -> u64 {
+        self.nlink
+    }
 }
 
 #[cfg(test)]
@@ -118,7 +144,7 @@ mod tests {
 
     #[test]
     fn file_metadata() {
-        let m = Metadata::new(true, 5, 0o755, 0, 0, 10, 20);
+        let m = Metadata::new(true, 5, 0o755, 0, 0, 10, 20, 8);
         assert!(m.is_file());
         assert!(!m.is_dir());
         assert_eq!(m.len(), 5);
@@ -131,11 +157,13 @@ mod tests {
         assert_eq!(m.gid(), 0);
         assert_eq!(m.mtime(), 10);
         assert_eq!(m.ctime(), 20);
+        assert_eq!(m.atime(), 8);
+        assert_eq!(m.nlink(), 1);
     }
 
     #[test]
     fn dir_metadata() {
-        let m = Metadata::new(false, 0, 0o500, 1000, 1000, 5, 5);
+        let m = Metadata::new(false, 0, 0o500, 1000, 1000, 5, 5, 3);
         assert!(m.is_dir());
         assert!(!m.is_file());
         assert_eq!(m.len(), 0);
@@ -148,5 +176,7 @@ mod tests {
         assert_eq!(m.gid(), 1000);
         assert_eq!(m.mtime(), 5);
         assert_eq!(m.ctime(), 5);
+        assert_eq!(m.atime(), 3);
+        assert_eq!(m.nlink(), 1);
     }
 }

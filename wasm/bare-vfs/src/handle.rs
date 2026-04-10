@@ -69,6 +69,20 @@ impl Write for FileHandle {
 }
 
 impl MemFs {
+    /// Create an [`OpenOptions`] builder for opening files with specific access modes.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let mut handle = MemFs::open_options()
+    ///     .read(true)
+    ///     .write(true)
+    ///     .create(true)
+    ///     .open(&mut fs, "/path")?;
+    /// ```
+    pub fn open_options() -> crate::open_options::OpenOptions {
+        crate::open_options::OpenOptions::new()
+    }
+
     /// Open a file for reading. Returns a [`FileHandle`] that implements
     /// [`Read`] and [`Seek`].
     ///
@@ -89,6 +103,7 @@ impl MemFs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::VfsErrorKind;
     use alloc::string::{String, ToString};
     use alloc::vec;
     use alloc::vec::Vec;
@@ -118,7 +133,8 @@ mod tests {
     #[test]
     fn open_missing() {
         let fs = MemFs::new();
-        assert!(matches!(fs.open("/nope"), Err(VfsError::NotFound)));
+        let err = fs.open("/nope").unwrap_err();
+        assert_eq!(*err.kind(), VfsErrorKind::NotFound);
     }
 
     #[test]
@@ -126,10 +142,8 @@ mod tests {
         let mut fs = MemFs::new();
         fs.write_with_mode("/secret", "x", 0o000);
         fs.set_current_user(1000, 1000);
-        assert!(matches!(
-            fs.open("/secret"),
-            Err(VfsError::PermissionDenied)
-        ));
+        let err = fs.open("/secret").unwrap_err();
+        assert_eq!(*err.kind(), VfsErrorKind::PermissionDenied);
     }
 
     #[test]

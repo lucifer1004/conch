@@ -1,8 +1,9 @@
 use alloc::collections::BTreeMap;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 
 use super::node::{split_path, TreeNode, MAX_SYMLINK_DEPTH};
 use super::MemFs;
+use crate::error::{VfsError, VfsErrorKind};
 
 impl MemFs {
     /// Permission check: `mask` is 3-bit (bit2=read, bit1=write, bit0=execute).
@@ -35,21 +36,25 @@ impl MemFs {
     }
 
     /// Traverse to `path`, following symlinks transparently (including in
-    /// intermediate components). Returns `None` if the path does not exist
-    /// or a symlink loop / depth limit is exceeded.
-    pub(crate) fn traverse(&self, path: &str) -> Option<&TreeNode> {
-        self.traverse_with_depth(path, 0)
+    /// intermediate components). Returns `Err` if the path does not exist,
+    /// a symlink loop / depth limit is exceeded, or a permission check fails.
+    pub(crate) fn traverse(&self, path: &str) -> Result<&TreeNode, VfsError> {
+        if path.is_empty() {
+            return Err(VfsErrorKind::NotFound.into());
+        }
+        let path = crate::normalize(path);
+        self.traverse_with_depth(&path, 0)
     }
 
-    fn traverse_with_depth(&self, path: &str, depth: usize) -> Option<&TreeNode> {
+    fn traverse_with_depth(&self, path: &str, depth: usize) -> Result<&TreeNode, VfsError> {
         if depth > MAX_SYMLINK_DEPTH {
-            return None;
+            return Err(VfsErrorKind::TooManySymlinks.into());
         }
         if path.is_empty() {
-            return None;
+            return Err(VfsErrorKind::NotFound.into());
         }
         if path == "/" {
-            return Some(&self.root);
+            return Ok(&self.root);
         }
 
         let components = split_path(path);
@@ -59,7 +64,13 @@ impl MemFs {
         for (i, component) in components.iter().enumerate() {
             match node {
                 TreeNode::Dir { children, .. } => {
-                    node = children.get(*component)?;
+                    // Check execute permission on this directory before descending into it.
+                    if !self.check_permission(node, 1) {
+                        return Err(VfsErrorKind::PermissionDenied.into());
+                    }
+                    node = children
+                        .get(*component)
+                        .ok_or_else(|| VfsError::from(VfsErrorKind::NotFound))?;
                     if current_dir == "/" {
                         current_dir = alloc::format!("/{}", component);
                     } else {
@@ -78,7 +89,9 @@ impl MemFs {
                         return self.traverse_with_depth(&full_path, depth + 1);
                     }
                 }
-                TreeNode::File { .. } | TreeNode::Symlink { .. } => return None,
+                TreeNode::File { .. } | TreeNode::Symlink { .. } => {
+                    return Err(VfsErrorKind::NotADirectory.into());
+                }
             }
         }
         if let TreeNode::Symlink { target, .. } = node {
@@ -86,24 +99,32 @@ impl MemFs {
             let resolved = Self::resolve_symlink_target(target, symlink_dir);
             return self.traverse_with_depth(&resolved, depth + 1);
         }
-        Some(node)
+        Ok(node)
     }
 
     /// Traverse to `path` WITHOUT following the final symlink component.
     /// Intermediate symlinks in directory components are still followed.
-    pub(crate) fn traverse_nofollow(&self, path: &str) -> Option<&TreeNode> {
-        self.traverse_nofollow_with_depth(path, 0)
+    pub(crate) fn traverse_nofollow(&self, path: &str) -> Result<&TreeNode, VfsError> {
+        if path.is_empty() {
+            return Err(VfsErrorKind::NotFound.into());
+        }
+        let path = crate::normalize(path);
+        self.traverse_nofollow_with_depth(&path, 0)
     }
 
-    fn traverse_nofollow_with_depth(&self, path: &str, depth: usize) -> Option<&TreeNode> {
+    fn traverse_nofollow_with_depth(
+        &self,
+        path: &str,
+        depth: usize,
+    ) -> Result<&TreeNode, VfsError> {
         if depth > MAX_SYMLINK_DEPTH {
-            return None;
+            return Err(VfsErrorKind::TooManySymlinks.into());
         }
         if path.is_empty() {
-            return None;
+            return Err(VfsErrorKind::NotFound.into());
         }
         if path == "/" {
-            return Some(&self.root);
+            return Ok(&self.root);
         }
 
         let components = split_path(path);
@@ -114,7 +135,13 @@ impl MemFs {
             let is_last = i == components.len() - 1;
             match node {
                 TreeNode::Dir { children, .. } => {
-                    node = children.get(*component)?;
+                    // Check execute permission on this directory before descending into it.
+                    if !self.check_permission(node, 1) {
+                        return Err(VfsErrorKind::PermissionDenied.into());
+                    }
+                    node = children
+                        .get(*component)
+                        .ok_or_else(|| VfsError::from(VfsErrorKind::NotFound))?;
                     if current_dir == "/" {
                         current_dir = alloc::format!("/{}", component);
                     } else {
@@ -135,25 +162,35 @@ impl MemFs {
                         }
                     }
                 }
-                TreeNode::File { .. } | TreeNode::Symlink { .. } => return None,
+                TreeNode::File { .. } | TreeNode::Symlink { .. } => {
+                    return Err(VfsErrorKind::NotADirectory.into());
+                }
             }
         }
-        Some(node)
+        Ok(node)
     }
 
-    pub(crate) fn traverse_mut(&mut self, path: &str) -> Option<&mut TreeNode> {
-        self.traverse_mut_with_depth(path, 0)
+    pub(crate) fn traverse_mut(&mut self, path: &str) -> Result<&mut TreeNode, VfsError> {
+        if path.is_empty() {
+            return Err(VfsErrorKind::NotFound.into());
+        }
+        let path = crate::normalize(path);
+        self.traverse_mut_with_depth(&path, 0)
     }
 
-    fn traverse_mut_with_depth(&mut self, path: &str, depth: usize) -> Option<&mut TreeNode> {
+    fn traverse_mut_with_depth(
+        &mut self,
+        path: &str,
+        depth: usize,
+    ) -> Result<&mut TreeNode, VfsError> {
         if depth > MAX_SYMLINK_DEPTH {
-            return None;
+            return Err(VfsErrorKind::TooManySymlinks.into());
         }
         if path.is_empty() {
-            return None;
+            return Err(VfsErrorKind::NotFound.into());
         }
         if path == "/" {
-            return Some(&mut self.root);
+            return Ok(&mut self.root);
         }
 
         let resolved_path = self.resolve_path_following_symlinks(path, depth)?;
@@ -162,12 +199,16 @@ impl MemFs {
             for component in split_path(&resolved_path) {
                 match node {
                     TreeNode::Dir { children, .. } => {
-                        node = children.get_mut(component)?;
+                        node = children
+                            .get_mut(component)
+                            .ok_or_else(|| VfsError::from(VfsErrorKind::NotFound))?;
                     }
-                    TreeNode::File { .. } | TreeNode::Symlink { .. } => return None,
+                    TreeNode::File { .. } | TreeNode::Symlink { .. } => {
+                        return Err(VfsErrorKind::NotADirectory.into());
+                    }
                 }
             }
-            Some(node)
+            Ok(node)
         } else {
             self.traverse_mut_with_depth(&resolved_path, depth + 1)
         }
@@ -175,15 +216,28 @@ impl MemFs {
 
     /// Resolve all symlinks in `path` and return the final canonical path,
     /// without returning a reference into the tree (avoids borrow issues).
-    fn resolve_path_following_symlinks(&self, path: &str, depth: usize) -> Option<String> {
+    pub(crate) fn resolve_path_following_symlinks(
+        &self,
+        path: &str,
+        depth: usize,
+    ) -> Result<String, VfsError> {
         if depth > MAX_SYMLINK_DEPTH {
-            return None;
+            return Err(VfsErrorKind::TooManySymlinks.into());
         }
+        // Normalize only at the entry point (depth == 0) to avoid redundant
+        // work on already-resolved recursive calls.
+        let normalized;
+        let path = if depth == 0 {
+            normalized = crate::normalize(path);
+            normalized.as_str()
+        } else {
+            path
+        };
         if path.is_empty() {
-            return None;
+            return Err(VfsErrorKind::NotFound.into());
         }
         if path == "/" {
-            return Some("/".into());
+            return Ok("/".into());
         }
 
         let components = split_path(path);
@@ -193,7 +247,9 @@ impl MemFs {
         for (i, component) in components.iter().enumerate() {
             match node {
                 TreeNode::Dir { children, .. } => {
-                    node = children.get(*component)?;
+                    node = children
+                        .get(*component)
+                        .ok_or_else(|| VfsError::from(VfsErrorKind::NotFound))?;
                     if current_dir == "/" {
                         current_dir = alloc::format!("/{}", component);
                     } else {
@@ -212,10 +268,12 @@ impl MemFs {
                         return self.resolve_path_following_symlinks(&full_path, depth + 1);
                     }
                 }
-                TreeNode::File { .. } | TreeNode::Symlink { .. } => return None,
+                TreeNode::File { .. } | TreeNode::Symlink { .. } => {
+                    return Err(VfsErrorKind::NotADirectory.into());
+                }
             }
         }
-        Some(current_dir)
+        Ok(current_dir)
     }
 
     /// Get mutable access to the parent directory's children map and the leaf name.
@@ -225,21 +283,21 @@ impl MemFs {
     /// chained reborrows.
     pub(crate) fn traverse_parent_mut<'a>(
         &'a mut self,
-        path: &'a str,
-    ) -> Option<(&'a mut BTreeMap<String, TreeNode>, &'a str)> {
-        let components = split_path(path);
+        path: &str,
+    ) -> Option<(&'a mut BTreeMap<String, TreeNode>, String)> {
+        let normalized = crate::normalize(path);
+        let components = split_path(&normalized);
         if components.is_empty() {
             return None;
         }
         let (parents, leaf) = components.split_at(components.len() - 1);
-        let leaf_name = leaf[0];
+        let leaf_name = leaf[0].to_string();
 
         if !parents.is_empty() {
             let raw_parent = alloc::format!("/{}", parents.join("/"));
             let resolved = self.resolve_path_following_symlinks(&raw_parent, 0);
             match resolved {
-                Some(r) if r != raw_parent => {
-                    let full = alloc::format!("{}/{}", r, leaf_name);
+                Ok(r) if r != raw_parent => {
                     let rp_components = split_path(&r);
                     let mut node: *mut TreeNode = &mut self.root;
                     for component in &rp_components {
@@ -252,7 +310,6 @@ impl MemFs {
                             }
                         }
                     }
-                    let _ = full;
                     unsafe {
                         match &mut *node {
                             TreeNode::Dir { children, .. } => return Some((children, leaf_name)),

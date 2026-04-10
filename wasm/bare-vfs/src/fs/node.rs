@@ -18,6 +18,7 @@ pub(crate) enum TreeNode {
         gid: u32,
         mtime: u64,
         ctime: u64,
+        atime: u64,
     },
     Dir {
         mode: u16,
@@ -26,6 +27,7 @@ pub(crate) enum TreeNode {
         gid: u32,
         mtime: u64,
         ctime: u64,
+        atime: u64,
     },
     Symlink {
         target: String,
@@ -33,6 +35,7 @@ pub(crate) enum TreeNode {
         gid: u32,
         mtime: u64,
         ctime: u64,
+        atime: u64,
     },
 }
 
@@ -80,6 +83,15 @@ impl TreeNode {
         }
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn atime(&self) -> u64 {
+        match self {
+            TreeNode::File { atime, .. }
+            | TreeNode::Dir { atime, .. }
+            | TreeNode::Symlink { atime, .. } => *atime,
+        }
+    }
+
     pub(crate) fn as_entry_ref(&self) -> EntryRef<'_> {
         match self {
             TreeNode::File {
@@ -89,6 +101,7 @@ impl TreeNode {
                 gid,
                 mtime,
                 ctime,
+                atime,
             } => EntryRef::File {
                 content,
                 mode: *mode,
@@ -96,6 +109,7 @@ impl TreeNode {
                 gid: *gid,
                 mtime: *mtime,
                 ctime: *ctime,
+                atime: *atime,
             },
             TreeNode::Dir {
                 mode,
@@ -103,6 +117,7 @@ impl TreeNode {
                 gid,
                 mtime,
                 ctime,
+                atime,
                 ..
             } => EntryRef::Dir {
                 mode: *mode,
@@ -110,6 +125,7 @@ impl TreeNode {
                 gid: *gid,
                 mtime: *mtime,
                 ctime: *ctime,
+                atime: *atime,
             },
             TreeNode::Symlink {
                 target,
@@ -117,12 +133,14 @@ impl TreeNode {
                 gid,
                 mtime,
                 ctime,
+                atime,
             } => EntryRef::Symlink {
                 target,
                 uid: *uid,
                 gid: *gid,
                 mtime: *mtime,
                 ctime: *ctime,
+                atime: *atime,
             },
         }
     }
@@ -136,22 +154,34 @@ impl TreeNode {
                 gid,
                 mtime,
                 ctime,
-            } => Metadata::new(true, content.len(), *mode, *uid, *gid, *mtime, *ctime),
+                atime,
+            } => Metadata::new(
+                true,
+                content.len(),
+                *mode,
+                *uid,
+                *gid,
+                *mtime,
+                *ctime,
+                *atime,
+            ),
             TreeNode::Dir {
                 mode,
                 uid,
                 gid,
                 mtime,
                 ctime,
+                atime,
                 ..
-            } => Metadata::new(false, 0, *mode, *uid, *gid, *mtime, *ctime),
+            } => Metadata::new(false, 0, *mode, *uid, *gid, *mtime, *ctime, *atime),
             TreeNode::Symlink {
                 uid,
                 gid,
                 mtime,
                 ctime,
+                atime,
                 ..
-            } => Metadata::new_symlink(0o777, *uid, *gid, *mtime, *ctime),
+            } => Metadata::new_symlink(0o777, *uid, *gid, *mtime, *ctime, *atime),
         }
     }
 

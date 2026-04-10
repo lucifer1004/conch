@@ -223,8 +223,10 @@ impl Shell {
 
         let content = match self.fs.read_to_string(&src_path) {
             Ok(s) => s.to_string(),
-            Err(bare_vfs::VfsError::IsADirectory) => return ("cp: omitting directory".into(), 1),
-            Err(bare_vfs::VfsError::NotFound) => {
+            Err(ref e) if *e.kind() == bare_vfs::VfsErrorKind::IsADirectory => {
+                return ("cp: omitting directory".into(), 1)
+            }
+            Err(ref e) if *e.kind() == bare_vfs::VfsErrorKind::NotFound => {
                 return (
                     format!("cp: cannot stat '{}': No such file or directory", files[0]),
                     1,
@@ -388,7 +390,7 @@ impl Shell {
 
         for arg in &args[1..] {
             let path = self.resolve(arg);
-            if let Err(_) = self.fs.set_mode(&path, mode) {
+            if self.fs.set_mode(&path, mode).is_err() {
                 return (
                     format!("chmod: cannot access '{}': No such file or directory", arg),
                     1,
@@ -540,7 +542,7 @@ impl Shell {
         let (uid, gid) = self.parse_owner_spec_userdb(spec);
 
         let targets: Vec<String> = positional[1..].iter().map(|s| self.resolve(s)).collect();
-        let orig_args: Vec<String> = positional[1..].iter().cloned().collect();
+        let orig_args: Vec<String> = positional[1..].to_vec();
 
         for (path, orig) in targets.iter().zip(orig_args.iter()) {
             if recursive && self.fs.is_dir(path) {
@@ -553,7 +555,7 @@ impl Shell {
                     .map(|(p, _)| p.to_string())
                     .collect();
                 for p in all_paths {
-                    if let Err(_) = self.fs.chown(&p, uid, gid) {
+                    if self.fs.chown(&p, uid, gid).is_err() {
                         return (
                             format!("chown: cannot access '{}': No such file or directory", orig),
                             1,
@@ -561,7 +563,7 @@ impl Shell {
                     }
                 }
             } else {
-                if let Err(_) = self.fs.chown(path, uid, gid) {
+                if self.fs.chown(path, uid, gid).is_err() {
                     return (
                         format!("chown: cannot access '{}': No such file or directory", orig),
                         1,
@@ -599,7 +601,7 @@ impl Shell {
             .unwrap_or(self.fs.current_gid());
 
         let targets: Vec<String> = positional[1..].iter().map(|s| self.resolve(s)).collect();
-        let orig_args: Vec<String> = positional[1..].iter().cloned().collect();
+        let orig_args: Vec<String> = positional[1..].to_vec();
 
         for (path, orig) in targets.iter().zip(orig_args.iter()) {
             if recursive && self.fs.is_dir(path) {
@@ -613,7 +615,7 @@ impl Shell {
                     .collect();
                 for p in all_paths {
                     let uid = self.fs.get(&p).map(|e| e.uid()).unwrap_or(0);
-                    if let Err(_) = self.fs.chown(&p, uid, gid) {
+                    if self.fs.chown(&p, uid, gid).is_err() {
                         return (
                             format!("chgrp: cannot access '{}': No such file or directory", orig),
                             1,
@@ -622,7 +624,7 @@ impl Shell {
                 }
             } else {
                 let uid = self.fs.get(path).map(|e| e.uid()).unwrap_or(0);
-                if let Err(_) = self.fs.chown(path, uid, gid) {
+                if self.fs.chown(path, uid, gid).is_err() {
                     return (
                         format!("chgrp: cannot access '{}': No such file or directory", orig),
                         1,

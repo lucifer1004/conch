@@ -11,3 +11,10 @@ include = ["src/**", "README.md", "LICENSE-*"]
 [features]
 default = []
 std = []
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
+
+[dev-dependencies]
+serde_json = "1"

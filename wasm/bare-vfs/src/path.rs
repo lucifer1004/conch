@@ -1,6 +1,8 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use crate::error::{VfsError, VfsErrorKind};
+
 /// Normalize an absolute path: resolve `.` and `..`, collapse separators.
 ///
 /// ```
@@ -43,6 +45,14 @@ pub fn parent(path: &str) -> Option<&str> {
     }
     path.rsplit_once('/')
         .map(|(p, _)| if p.is_empty() { "/" } else { p })
+}
+
+/// Validate that a path is absolute (starts with `/`) and non-empty.
+pub fn validate(path: &str) -> Result<(), VfsError> {
+    if path.is_empty() || !path.starts_with('/') {
+        return Err(VfsErrorKind::NotFound.into());
+    }
+    Ok(())
 }
 
 #[cfg(test)]

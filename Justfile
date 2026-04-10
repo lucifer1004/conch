@@ -53,7 +53,7 @@ fmt:
 [doc("Run Rust unit tests in wasm/ (shell, parser, ansi).")]
 [group("checks")]
 test:
-    cd wasm && {{ cargo }} test
+    cd wasm && {{ cargo }} test --workspace --all-features
 
 # Symlink this repo as a local preview package (…/preview/conch/0.1.0).
 [group("build")]

@@ -5,6 +5,7 @@ pub struct UserEntry {
     pub name: String,
     pub gid: u32,
     pub home: String,
+    #[allow(dead_code)]
     pub shell: String,
 }
 
@@ -67,17 +68,21 @@ impl UserDb {
     /// Add a user with specific uid/gid.
     pub fn add_user_with_ids(&mut self, name: &str, uid: u32, gid: u32, home: &str) -> u32 {
         // Ensure the primary group exists
-        if self.groups.get(&gid).is_none() {
-            let group = GroupEntry {
-                gid,
-                name: name.to_string(),
-                members: vec![name.to_string()],
-            };
-            self.groups.insert(gid, group);
-            self.name_to_gid.insert(name.to_string(), gid);
-        } else if let Some(g) = self.groups.get_mut(&gid) {
-            if !g.members.contains(&name.to_string()) {
-                g.members.push(name.to_string());
+        match self.groups.entry(gid) {
+            std::collections::btree_map::Entry::Vacant(e) => {
+                let group = GroupEntry {
+                    gid,
+                    name: name.to_string(),
+                    members: vec![name.to_string()],
+                };
+                e.insert(group);
+                self.name_to_gid.insert(name.to_string(), gid);
+            }
+            std::collections::btree_map::Entry::Occupied(mut e) => {
+                let g = e.get_mut();
+                if !g.members.contains(&name.to_string()) {
+                    g.members.push(name.to_string());
+                }
             }
         }
 
@@ -180,6 +185,7 @@ impl UserDb {
         self.groups.get(gid)
     }
 
+    #[allow(dead_code)]
     pub fn get_group_by_gid(&self, gid: u32) -> Option<&GroupEntry> {
         self.groups.get(&gid)
     }
@@ -221,7 +227,7 @@ impl UserDb {
             .values()
             .filter(|g| {
                 g.members.contains(&username.to_string())
-                    || primary_gid.map_or(false, |pgid| g.gid == pgid)
+                    || primary_gid.is_some_and(|pgid| g.gid == pgid)
             })
             .collect()
     }

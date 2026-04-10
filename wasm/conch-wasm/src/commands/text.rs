@@ -223,6 +223,7 @@ impl Shell {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn grep_content(
         &self,
         content: &str,

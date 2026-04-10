@@ -32,13 +32,17 @@ mod fs;
 #[cfg(feature = "std")]
 mod handle;
 mod metadata;
+#[cfg(feature = "std")]
+mod open_options;
 mod path;
 
 pub use dir::DirEntry;
 pub use entry::{Entry, EntryRef};
-pub use error::VfsError;
-pub use fs::MemFs;
+pub use error::{VfsError, VfsErrorKind};
+pub use fs::{AccessMode, MemFs, ReadDirIter, Walk};
 #[cfg(feature = "std")]
 pub use handle::FileHandle;
 pub use metadata::Metadata;
-pub use path::{normalize, parent};
+#[cfg(feature = "std")]
+pub use open_options::OpenOptions;
+pub use path::{normalize, parent, validate};

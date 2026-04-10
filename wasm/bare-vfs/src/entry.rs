@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 
 /// A node in the virtual filesystem — either a file, directory, or symlink.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Entry {
     /// A regular file with byte content and a Unix permission mode.
     File {
@@ -12,6 +13,7 @@ pub enum Entry {
         gid: u32,
         mtime: u64,
         ctime: u64,
+        atime: u64,
     },
     /// A directory with a Unix permission mode.
     Dir {
@@ -20,6 +22,7 @@ pub enum Entry {
         gid: u32,
         mtime: u64,
         ctime: u64,
+        atime: u64,
     },
     /// A symbolic link pointing to `target`. Mode is always `0o777`.
     Symlink {
@@ -28,6 +31,7 @@ pub enum Entry {
         gid: u32,
         mtime: u64,
         ctime: u64,
+        atime: u64,
     },
 }
 
@@ -41,6 +45,7 @@ impl Entry {
             gid: 0,
             mtime: 0,
             ctime: 0,
+            atime: 0,
         }
     }
 
@@ -53,6 +58,7 @@ impl Entry {
             gid: 0,
             mtime: 0,
             ctime: 0,
+            atime: 0,
         }
     }
 
@@ -64,6 +70,7 @@ impl Entry {
             gid: 0,
             mtime: 0,
             ctime: 0,
+            atime: 0,
         }
     }
 
@@ -75,6 +82,7 @@ impl Entry {
             gid: 0,
             mtime: 0,
             ctime: 0,
+            atime: 0,
         }
     }
 
@@ -86,6 +94,7 @@ impl Entry {
             gid: 0,
             mtime: 0,
             ctime: 0,
+            atime: 0,
         }
     }
 
@@ -174,6 +183,15 @@ impl Entry {
         }
     }
 
+    /// Returns the last access time.
+    pub fn atime(&self) -> u64 {
+        match self {
+            Entry::File { atime, .. } | Entry::Dir { atime, .. } | Entry::Symlink { atime, .. } => {
+                *atime
+            }
+        }
+    }
+
     /// Returns `true` if the owner read bit is set.
     pub fn is_readable(&self) -> bool {
         self.mode() & 0o400 != 0
@@ -189,14 +207,43 @@ impl Entry {
         self.mode() & 0o111 != 0
     }
 
+    /// Setuid bit.
+    pub const SETUID: u16 = 0o4000;
+    /// Setgid bit.
+    pub const SETGID: u16 = 0o2000;
+    /// Sticky bit.
+    pub const STICKY: u16 = 0o1000;
+
     /// Format a mode as a Unix permission string (e.g., `"rwxr-xr-x"`).
+    /// Handles setuid, setgid, and sticky bits.
     pub fn format_mode(mode: u16) -> String {
         let mut s = String::with_capacity(9);
-        for shift in [6, 3, 0] {
-            let bits = (mode >> shift) & 0o7;
-            s.push(if bits & 4 != 0 { 'r' } else { '-' });
-            s.push(if bits & 2 != 0 { 'w' } else { '-' });
-            s.push(if bits & 1 != 0 { 'x' } else { '-' });
+        // owner bits (shift=6)
+        let owner = (mode >> 6) & 0o7;
+        s.push(if owner & 4 != 0 { 'r' } else { '-' });
+        s.push(if owner & 2 != 0 { 'w' } else { '-' });
+        if mode & Self::SETUID != 0 {
+            s.push(if owner & 1 != 0 { 's' } else { 'S' });
+        } else {
+            s.push(if owner & 1 != 0 { 'x' } else { '-' });
+        }
+        // group bits (shift=3)
+        let group = (mode >> 3) & 0o7;
+        s.push(if group & 4 != 0 { 'r' } else { '-' });
+        s.push(if group & 2 != 0 { 'w' } else { '-' });
+        if mode & Self::SETGID != 0 {
+            s.push(if group & 1 != 0 { 's' } else { 'S' });
+        } else {
+            s.push(if group & 1 != 0 { 'x' } else { '-' });
+        }
+        // other bits (shift=0)
+        let other = mode & 0o7;
+        s.push(if other & 4 != 0 { 'r' } else { '-' });
+        s.push(if other & 2 != 0 { 'w' } else { '-' });
+        if mode & Self::STICKY != 0 {
+            s.push(if other & 1 != 0 { 't' } else { 'T' });
+        } else {
+            s.push(if other & 1 != 0 { 'x' } else { '-' });
         }
         s
     }
@@ -215,6 +262,7 @@ pub enum EntryRef<'a> {
         gid: u32,
         mtime: u64,
         ctime: u64,
+        atime: u64,
     },
     /// A directory.
     Dir {
@@ -223,6 +271,7 @@ pub enum EntryRef<'a> {
         gid: u32,
         mtime: u64,
         ctime: u64,
+        atime: u64,
     },
     /// A symbolic link with a borrowed target path.
     Symlink {
@@ -231,6 +280,7 @@ pub enum EntryRef<'a> {
         gid: u32,
         mtime: u64,
         ctime: u64,
+        atime: u64,
     },
 }
 
@@ -321,6 +371,15 @@ impl<'a> EntryRef<'a> {
             EntryRef::File { ctime, .. }
             | EntryRef::Dir { ctime, .. }
             | EntryRef::Symlink { ctime, .. } => *ctime,
+        }
+    }
+
+    /// Returns the last access time.
+    pub fn atime(&self) -> u64 {
+        match self {
+            EntryRef::File { atime, .. }
+            | EntryRef::Dir { atime, .. }
+            | EntryRef::Symlink { atime, .. } => *atime,
         }
     }
 
@@ -434,6 +493,7 @@ mod tests {
             gid: 1000,
             mtime: 5,
             ctime: 3,
+            atime: 0,
         };
         assert!(r.is_file());
         assert!(!r.is_dir());
@@ -458,6 +518,7 @@ mod tests {
             gid: 0,
             mtime: 0,
             ctime: 0,
+            atime: 0,
         };
         assert!(r.is_dir());
         assert!(!r.is_file());
@@ -480,6 +541,7 @@ mod tests {
             gid: 0,
             mtime: 0,
             ctime: 0,
+            atime: 0,
         };
         assert_eq!(r.content(), Some([0u8, 0xFF].as_slice()));
         assert_eq!(r.content_str(), None);
@@ -494,6 +556,7 @@ mod tests {
             gid: 0,
             mtime: 0,
             ctime: 0,
+            atime: 0,
         };
         assert!(!r.is_readable());
         assert!(!r.is_writable());
@@ -510,6 +573,7 @@ mod tests {
             gid: 99,
             mtime: 0,
             ctime: 0,
+            atime: 0,
         };
         assert_eq!(r.uid(), 42);
         assert_eq!(r.gid(), 99);
@@ -520,6 +584,7 @@ mod tests {
             gid: 2,
             mtime: 0,
             ctime: 0,
+            atime: 0,
         };
         assert_eq!(d.uid(), 1);
         assert_eq!(d.gid(), 2);
@@ -530,6 +595,7 @@ mod tests {
             gid: 500,
             mtime: 0,
             ctime: 0,
+            atime: 0,
         };
         assert_eq!(s.uid(), 500);
         assert_eq!(s.gid(), 500);

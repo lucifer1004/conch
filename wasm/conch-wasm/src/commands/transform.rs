@@ -37,14 +37,14 @@ impl Shell {
         }
 
         if len_a > len_b {
-            for i in common..len_a {
+            for (i, line) in lines_a.iter().enumerate().skip(common) {
                 out.push(format!("{} d {}", i + 1, len_b));
-                out.push(format!("< {}", lines_a[i]));
+                out.push(format!("< {}", line));
             }
         } else if len_b > len_a {
-            for i in common..len_b {
+            for (i, line) in lines_b.iter().enumerate().skip(common) {
                 out.push(format!("{} a {}", len_a, i + 1));
-                out.push(format!("> {}", lines_b[i]));
+                out.push(format!("> {}", line));
             }
         }
 
@@ -161,7 +161,7 @@ impl Shell {
             let ascii: String = chunk
                 .iter()
                 .map(|&b| {
-                    if b >= 0x20 && b < 0x7f {
+                    if (0x20..0x7f).contains(&b) {
                         b as char
                     } else {
                         '.'
@@ -285,7 +285,7 @@ fn base64_char_value(c: char) -> Option<u8> {
 }
 
 fn base64_decode(input: &str) -> Result<Vec<u8>, &'static str> {
-    if input.len() % 4 != 0 {
+    if !input.len().is_multiple_of(4) {
         return Err("invalid length");
     }
     let mut out = Vec::new();

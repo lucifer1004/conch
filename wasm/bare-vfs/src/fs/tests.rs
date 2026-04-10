@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::VfsErrorKind;
 use alloc::vec;
 
 #[test]
@@ -28,7 +29,10 @@ fn write_and_read_bytes() {
     let mut fs = MemFs::new();
     fs.write("/bin", vec![0u8, 1, 0xFF]);
     assert_eq!(fs.read("/bin"), Ok([0u8, 1, 0xFF].as_slice()));
-    assert_eq!(fs.read_to_string("/bin"), Err(VfsError::InvalidUtf8));
+    assert_eq!(
+        fs.read_to_string("/bin"),
+        Err(VfsErrorKind::InvalidUtf8.into())
+    );
 }
 
 #[test]
@@ -44,20 +48,26 @@ fn write_with_mode_sets_permissions() {
     let mut fs = MemFs::new();
     fs.write_with_mode("/secret", "x".to_string(), 0o000);
     fs.set_current_user(1000, 1000);
-    assert_eq!(fs.read("/secret"), Err(VfsError::PermissionDenied));
+    assert_eq!(
+        fs.read("/secret"),
+        Err(VfsErrorKind::PermissionDenied.into())
+    );
 }
 
 #[test]
 fn read_missing() {
     let fs = MemFs::new();
-    assert_eq!(fs.read_to_string("/nope"), Err(VfsError::NotFound));
+    assert_eq!(
+        fs.read_to_string("/nope"),
+        Err(VfsErrorKind::NotFound.into())
+    );
 }
 
 #[test]
 fn read_directory() {
     let mut fs = MemFs::new();
     fs.create_dir_all("/a");
-    assert_eq!(fs.read("/a"), Err(VfsError::IsADirectory));
+    assert_eq!(fs.read("/a"), Err(VfsErrorKind::IsADirectory.into()));
 }
 
 // -- exists / is_file / is_dir / get ------------------------------------
@@ -110,7 +120,7 @@ fn metadata_dir() {
 #[test]
 fn metadata_not_found() {
     let fs = MemFs::new();
-    assert_eq!(fs.metadata("/nope"), Err(VfsError::NotFound));
+    assert_eq!(fs.metadata("/nope"), Err(VfsErrorKind::NotFound.into()));
 }
 
 // -- append -------------------------------------------------------------
@@ -126,14 +136,17 @@ fn append_to_file() {
 #[test]
 fn append_not_found() {
     let mut fs = MemFs::new();
-    assert_eq!(fs.append("/nope", b"x"), Err(VfsError::NotFound));
+    assert_eq!(fs.append("/nope", b"x"), Err(VfsErrorKind::NotFound.into()));
 }
 
 #[test]
 fn append_to_directory() {
     let mut fs = MemFs::new();
     fs.create_dir_all("/d");
-    assert_eq!(fs.append("/d", b"x"), Err(VfsError::IsADirectory));
+    assert_eq!(
+        fs.append("/d", b"x"),
+        Err(VfsErrorKind::IsADirectory.into())
+    );
 }
 
 #[test]
@@ -141,7 +154,10 @@ fn append_permission_denied() {
     let mut fs = MemFs::new();
     fs.write_with_mode("/ro", "x", 0o444);
     fs.set_current_user(1000, 1000);
-    assert_eq!(fs.append("/ro", b"y"), Err(VfsError::PermissionDenied));
+    assert_eq!(
+        fs.append("/ro", b"y"),
+        Err(VfsErrorKind::PermissionDenied.into())
+    );
 }
 
 // -- create_dir ---------------------------------------------------------
@@ -157,13 +173,16 @@ fn create_dir_single() {
 fn create_dir_already_exists() {
     let mut fs = MemFs::new();
     fs.create_dir_all("/sub");
-    assert_eq!(fs.create_dir("/sub"), Err(VfsError::AlreadyExists));
+    assert_eq!(
+        fs.create_dir("/sub"),
+        Err(VfsErrorKind::AlreadyExists.into())
+    );
 }
 
 #[test]
 fn create_dir_parent_missing() {
     let mut fs = MemFs::new();
-    assert_eq!(fs.create_dir("/a/b"), Err(VfsError::NotFound));
+    assert_eq!(fs.create_dir("/a/b"), Err(VfsErrorKind::NotFound.into()));
 }
 
 #[test]
@@ -247,14 +266,20 @@ fn remove_dir_all_preserves_siblings() {
 #[test]
 fn remove_dir_all_not_found() {
     let mut fs = MemFs::new();
-    assert_eq!(fs.remove_dir_all("/nope"), Err(VfsError::NotFound));
+    assert_eq!(
+        fs.remove_dir_all("/nope"),
+        Err(VfsErrorKind::NotFound.into())
+    );
 }
 
 #[test]
 fn remove_dir_all_on_file() {
     let mut fs = MemFs::new();
     fs.write("/f.txt", "x".to_string());
-    assert_eq!(fs.remove_dir_all("/f.txt"), Err(VfsError::NotADirectory));
+    assert_eq!(
+        fs.remove_dir_all("/f.txt"),
+        Err(VfsErrorKind::NotADirectory.into())
+    );
 }
 
 // -- set_mode -----------------------------------------------------------
@@ -265,7 +290,10 @@ fn set_mode_file() {
     fs.write("/f.txt", "x".to_string());
     fs.set_mode("/f.txt", 0o000).unwrap();
     fs.set_current_user(1000, 1000);
-    assert_eq!(fs.read("/f.txt"), Err(VfsError::PermissionDenied));
+    assert_eq!(
+        fs.read("/f.txt"),
+        Err(VfsErrorKind::PermissionDenied.into())
+    );
     // Switch back to root to re-enable read
     fs.set_current_user(0, 0);
     fs.set_mode("/f.txt", 0o644).unwrap();
@@ -283,7 +311,10 @@ fn set_mode_dir() {
 #[test]
 fn set_mode_not_found() {
     let mut fs = MemFs::new();
-    assert_eq!(fs.set_mode("/nope", 0o644), Err(VfsError::NotFound));
+    assert_eq!(
+        fs.set_mode("/nope", 0o644),
+        Err(VfsErrorKind::NotFound.into())
+    );
 }
 
 // -- copy ---------------------------------------------------------------
@@ -300,14 +331,14 @@ fn copy_file() {
 #[test]
 fn copy_not_found() {
     let mut fs = MemFs::new();
-    assert_eq!(fs.copy("/nope", "/dst"), Err(VfsError::NotFound));
+    assert_eq!(fs.copy("/nope", "/dst"), Err(VfsErrorKind::NotFound.into()));
 }
 
 #[test]
 fn copy_directory() {
     let mut fs = MemFs::new();
     fs.create_dir_all("/d");
-    assert_eq!(fs.copy("/d", "/d2"), Err(VfsError::IsADirectory));
+    assert_eq!(fs.copy("/d", "/d2"), Err(VfsErrorKind::IsADirectory.into()));
 }
 
 #[test]
@@ -315,7 +346,10 @@ fn copy_permission_denied() {
     let mut fs = MemFs::new();
     fs.write_with_mode("/secret", "x", 0o000);
     fs.set_current_user(1000, 1000);
-    assert_eq!(fs.copy("/secret", "/dst"), Err(VfsError::PermissionDenied));
+    assert_eq!(
+        fs.copy("/secret", "/dst"),
+        Err(VfsErrorKind::PermissionDenied.into())
+    );
 }
 
 #[test]
@@ -341,7 +375,10 @@ fn rename_file() {
 #[test]
 fn rename_not_found() {
     let mut fs = MemFs::new();
-    assert_eq!(fs.rename("/nope", "/dst"), Err(VfsError::NotFound));
+    assert_eq!(
+        fs.rename("/nope", "/dst"),
+        Err(VfsErrorKind::NotFound.into())
+    );
 }
 
 // -- read_dir -----------------------------------------------------------
@@ -360,14 +397,17 @@ fn read_dir_sorted() {
 #[test]
 fn read_dir_not_found() {
     let fs = MemFs::new();
-    assert_eq!(fs.read_dir("/nope"), Err(VfsError::NotFound));
+    assert_eq!(fs.read_dir("/nope"), Err(VfsErrorKind::NotFound.into()));
 }
 
 #[test]
 fn read_dir_on_file() {
     let mut fs = MemFs::new();
     fs.write("/f.txt", "x".to_string());
-    assert_eq!(fs.read_dir("/f.txt"), Err(VfsError::NotADirectory));
+    assert_eq!(
+        fs.read_dir("/f.txt"),
+        Err(VfsErrorKind::NotADirectory.into())
+    );
 }
 
 #[test]
@@ -591,8 +631,8 @@ fn empty_path_is_not_found() {
     let fs = MemFs::new();
     assert!(!fs.exists(""));
     assert!(fs.get("").is_none());
-    assert_eq!(fs.read(""), Err(VfsError::NotFound));
-    assert_eq!(fs.metadata(""), Err(VfsError::NotFound));
+    assert_eq!(fs.read(""), Err(VfsErrorKind::NotFound.into()));
+    assert_eq!(fs.metadata(""), Err(VfsErrorKind::NotFound.into()));
 }
 
 #[test]
@@ -651,7 +691,7 @@ fn touch_on_existing_dir_is_noop() {
 fn create_dir_where_file_exists() {
     let mut fs = MemFs::new();
     fs.write("/x", "file".to_string());
-    assert_eq!(fs.create_dir("/x"), Err(VfsError::AlreadyExists));
+    assert_eq!(fs.create_dir("/x"), Err(VfsErrorKind::AlreadyExists.into()));
     assert!(fs.is_file("/x")); // unchanged
 }
 
@@ -847,8 +887,11 @@ fn symlink_dangling_returns_not_found() {
     fs.symlink("/nonexistent.txt", "/dangling").unwrap();
     assert!(fs.is_symlink("/dangling"));
     // Following a dangling symlink should return NotFound
-    assert_eq!(fs.read("/dangling"), Err(VfsError::NotFound));
-    assert_eq!(fs.read_to_string("/dangling"), Err(VfsError::NotFound));
+    assert_eq!(fs.read("/dangling"), Err(VfsErrorKind::NotFound.into()));
+    assert_eq!(
+        fs.read_to_string("/dangling"),
+        Err(VfsErrorKind::NotFound.into())
+    );
     // exists() follows symlinks, so dangling link returns false
     assert!(!fs.exists("/dangling"));
 }
@@ -867,14 +910,14 @@ fn symlink_chain() {
 }
 
 #[test]
-fn symlink_loop_returns_not_found() {
+fn symlink_loop_returns_too_many_symlinks() {
     let mut fs = MemFs::new();
     // a -> b -> a  (loop)
     fs.symlink("/b", "/a").unwrap();
     fs.symlink("/a", "/b").unwrap();
-    // Reading through a loop should fail (not panic), returning NotFound
-    assert_eq!(fs.read("/a"), Err(VfsError::NotFound));
-    assert_eq!(fs.read("/b"), Err(VfsError::NotFound));
+    // Reading through a loop should fail (not panic), returning TooManySymlinks
+    assert_eq!(fs.read("/a"), Err(VfsErrorKind::TooManySymlinks.into()));
+    assert_eq!(fs.read("/b"), Err(VfsErrorKind::TooManySymlinks.into()));
     assert!(!fs.exists("/a"));
 }
 
@@ -885,9 +928,12 @@ fn read_link_returns_target_without_following() {
     fs.symlink("/real.txt", "/link").unwrap();
     assert_eq!(fs.read_link("/link"), Ok("/real.txt".to_string()));
     // read_link on a non-symlink returns NotASymlink
-    assert_eq!(fs.read_link("/real.txt"), Err(VfsError::NotASymlink));
+    assert_eq!(
+        fs.read_link("/real.txt"),
+        Err(VfsErrorKind::NotASymlink.into())
+    );
     // read_link on missing path returns NotFound
-    assert_eq!(fs.read_link("/missing"), Err(VfsError::NotFound));
+    assert_eq!(fs.read_link("/missing"), Err(VfsErrorKind::NotFound.into()));
 }
 
 #[test]
@@ -976,7 +1022,7 @@ fn symlink_parent_missing_returns_error() {
     let mut fs = MemFs::new();
     assert_eq!(
         fs.symlink("/target", "/no_parent/link"),
-        Err(VfsError::NotFound)
+        Err(VfsErrorKind::NotFound.into())
     );
 }
 
@@ -1015,7 +1061,10 @@ fn chown_directory() {
 #[test]
 fn chown_not_found() {
     let mut fs = MemFs::new();
-    assert_eq!(fs.chown("/nope", 1000, 1000), Err(VfsError::NotFound));
+    assert_eq!(
+        fs.chown("/nope", 1000, 1000),
+        Err(VfsErrorKind::NotFound.into())
+    );
 }
 
 #[test]
@@ -1031,11 +1080,17 @@ fn permission_owner_bits() {
 
     // As group member: no group read bit
     fs.set_current_user(9999, 2000);
-    assert_eq!(fs.read("/f.txt"), Err(VfsError::PermissionDenied));
+    assert_eq!(
+        fs.read("/f.txt"),
+        Err(VfsErrorKind::PermissionDenied.into())
+    );
 
     // As other: no other read bit
     fs.set_current_user(9999, 9999);
-    assert_eq!(fs.read("/f.txt"), Err(VfsError::PermissionDenied));
+    assert_eq!(
+        fs.read("/f.txt"),
+        Err(VfsErrorKind::PermissionDenied.into())
+    );
 }
 
 #[test]
@@ -1047,7 +1102,10 @@ fn permission_group_bits() {
 
     // Owner but not group: owner bits empty
     fs.set_current_user(1000, 9999);
-    assert_eq!(fs.read("/f.txt"), Err(VfsError::PermissionDenied));
+    assert_eq!(
+        fs.read("/f.txt"),
+        Err(VfsErrorKind::PermissionDenied.into())
+    );
 
     // Group member: allowed
     fs.set_current_user(9999, 2000);
@@ -1055,7 +1113,10 @@ fn permission_group_bits() {
 
     // Other: not allowed
     fs.set_current_user(9999, 9999);
-    assert_eq!(fs.read("/f.txt"), Err(VfsError::PermissionDenied));
+    assert_eq!(
+        fs.read("/f.txt"),
+        Err(VfsErrorKind::PermissionDenied.into())
+    );
 }
 
 #[test]
@@ -1067,11 +1128,17 @@ fn permission_other_bits() {
 
     // Owner: owner bits empty
     fs.set_current_user(1000, 9999);
-    assert_eq!(fs.read("/f.txt"), Err(VfsError::PermissionDenied));
+    assert_eq!(
+        fs.read("/f.txt"),
+        Err(VfsErrorKind::PermissionDenied.into())
+    );
 
     // Group: group bits empty
     fs.set_current_user(9999, 2000);
-    assert_eq!(fs.read("/f.txt"), Err(VfsError::PermissionDenied));
+    assert_eq!(
+        fs.read("/f.txt"),
+        Err(VfsErrorKind::PermissionDenied.into())
+    );
 
     // Other: allowed
     fs.set_current_user(9999, 9999);
@@ -1425,20 +1492,20 @@ fn truncate_to_zero() {
     let mut fs = MemFs::new();
     fs.write("/a", "data");
     fs.truncate("/a", 0).unwrap();
-    assert_eq!(fs.read("/a").unwrap(), &[]);
+    assert_eq!(fs.read("/a").unwrap(), &[] as &[u8]);
 }
 
 #[test]
 fn truncate_missing() {
     let mut fs = MemFs::new();
-    assert!(matches!(fs.truncate("/x", 0), Err(VfsError::NotFound)));
+    assert!(matches!(fs.truncate("/x", 0), Err(ref e) if *e.kind() == VfsErrorKind::NotFound));
 }
 
 #[test]
 fn truncate_directory() {
     let mut fs = MemFs::new();
     fs.create_dir("/d").unwrap();
-    assert!(matches!(fs.truncate("/d", 0), Err(VfsError::IsADirectory)));
+    assert!(matches!(fs.truncate("/d", 0), Err(ref e) if *e.kind() == VfsErrorKind::IsADirectory));
 }
 
 #[test]
@@ -1446,10 +1513,9 @@ fn truncate_permission_denied() {
     let mut fs = MemFs::new();
     fs.write_with_mode("/a", "data", 0o444);
     fs.set_current_user(1000, 1000);
-    assert!(matches!(
-        fs.truncate("/a", 0),
-        Err(VfsError::PermissionDenied)
-    ));
+    assert!(
+        matches!(fs.truncate("/a", 0), Err(ref e) if *e.kind() == VfsErrorKind::PermissionDenied)
+    );
 }
 
 #[test]
@@ -1581,4 +1647,387 @@ fn timestamps_insert_sets_current_time() {
     fs.insert("/x".to_string(), Entry::file("data"));
     let meta = fs.metadata("/x").unwrap();
     assert_eq!(meta.mtime(), 101);
+}
+
+// -- atime / nlink / DirEntry::size tests ----------------------------------
+
+#[test]
+fn atime_initialized_with_mtime() {
+    let mut fs = MemFs::new();
+    fs.write("/f.txt", "hello");
+    let meta = fs.metadata("/f.txt").unwrap();
+    assert_eq!(meta.atime(), meta.mtime());
+}
+
+#[test]
+fn atime_not_updated_on_set_mode() {
+    let mut fs = MemFs::new();
+    fs.write("/f.txt", "hello");
+    let atime_before = fs.metadata("/f.txt").unwrap().atime();
+    fs.set_mode("/f.txt", 0o600).unwrap();
+    let atime_after = fs.metadata("/f.txt").unwrap().atime();
+    assert_eq!(atime_before, atime_after);
+}
+
+#[test]
+fn set_atime_explicit() {
+    let mut fs = MemFs::new();
+    fs.write("/f.txt", "hello");
+    fs.set_atime("/f.txt", 999).unwrap();
+    assert_eq!(fs.metadata("/f.txt").unwrap().atime(), 999);
+}
+
+#[test]
+fn set_atime_not_found() {
+    let mut fs = MemFs::new();
+    assert_eq!(fs.set_atime("/nope", 1), Err(VfsErrorKind::NotFound.into()));
+}
+
+#[test]
+fn nlink_always_one() {
+    let mut fs = MemFs::new();
+    fs.write("/f.txt", "hello");
+    fs.create_dir("/d").unwrap();
+    assert_eq!(fs.metadata("/f.txt").unwrap().nlink(), 1);
+    assert_eq!(fs.metadata("/d").unwrap().nlink(), 1);
+}
+
+#[test]
+fn dir_entry_has_size() {
+    let mut fs = MemFs::new();
+    fs.write("/file.txt", "hello world");
+    fs.create_dir("/sub").unwrap();
+    let entries = fs.read_dir("/").unwrap();
+    let file_e = entries.iter().find(|e| e.name == "file.txt").unwrap();
+    let dir_e = entries.iter().find(|e| e.name == "sub").unwrap();
+    assert_eq!(file_e.size, 11);
+    assert_eq!(dir_e.size, 0);
+}
+
+// -- Directory execute permission tests ------------------------------------
+
+#[test]
+fn traverse_requires_dir_execute() {
+    let mut fs = MemFs::new();
+    fs.create_dir_all("/a/b");
+    fs.write("/a/b/file", "data");
+    fs.set_mode("/a", 0o644).unwrap(); // remove execute from /a
+    fs.set_current_user(1000, 1000);
+    assert!(fs.read("/a/b/file").is_err()); // can't traverse /a without execute
+}
+
+#[test]
+fn traverse_dir_execute_root_bypass() {
+    let mut fs = MemFs::new();
+    fs.create_dir_all("/a/b");
+    fs.write("/a/b/file", "data");
+    fs.set_mode("/a", 0o000).unwrap();
+    // uid=0 (root) bypasses permission checks
+    assert!(fs.read("/a/b/file").is_ok());
+}
+
+#[test]
+fn symlink_loop_returns_too_many_symlinks_from_traverse() {
+    let mut fs = MemFs::new();
+    fs.symlink("/b", "/a").unwrap();
+    fs.symlink("/a", "/b").unwrap();
+    let err = fs.read("/a").unwrap_err();
+    assert_eq!(*err.kind(), VfsErrorKind::TooManySymlinks);
+}
+
+// -- access() tests --------------------------------------------------------
+
+#[test]
+fn access_existence() {
+    let mut fs = MemFs::new();
+    fs.write("/f", "x");
+    assert!(fs.access("/f", crate::AccessMode::F_OK).is_ok());
+    assert!(fs.access("/nope", crate::AccessMode::F_OK).is_err());
+}
+
+#[test]
+fn access_read_permission() {
+    let mut fs = MemFs::new();
+    fs.write_with_mode("/f", "x", 0o644);
+    // root can always read
+    assert!(fs.access("/f", crate::AccessMode::R_OK).is_ok());
+}
+
+#[test]
+fn access_permission_denied_non_root() {
+    let mut fs = MemFs::new();
+    fs.write_with_mode("/f", "x", 0o000);
+    fs.set_current_user(1000, 1000);
+    assert!(fs.access("/f", crate::AccessMode::R_OK).is_err());
+    assert!(fs.access("/f", crate::AccessMode::W_OK).is_err());
+    assert!(fs.access("/f", crate::AccessMode::X_OK).is_err());
+}
+
+#[test]
+fn access_combined_modes() {
+    let mut fs = MemFs::new();
+    fs.write_with_mode("/f", "x", 0o755);
+    assert!(fs
+        .access("/f", crate::AccessMode::R_OK | crate::AccessMode::X_OK)
+        .is_ok());
+}
+
+#[test]
+fn access_f_ok_does_not_check_permissions() {
+    let mut fs = MemFs::new();
+    fs.write_with_mode("/f", "x", 0o000);
+    fs.set_current_user(1000, 1000);
+    // F_OK only checks existence, not permissions
+    assert!(fs.access("/f", crate::AccessMode::F_OK).is_ok());
+}
+
+// -- format_mode special bit tests -----------------------------------------
+
+#[test]
+fn format_mode_setuid() {
+    assert_eq!(crate::Entry::format_mode(0o4755), "rwsr-xr-x");
+    assert_eq!(crate::Entry::format_mode(0o4644), "rwSr--r--");
+}
+
+#[test]
+fn format_mode_setgid() {
+    assert_eq!(crate::Entry::format_mode(0o2755), "rwxr-sr-x");
+    assert_eq!(crate::Entry::format_mode(0o2745), "rwxr-Sr-x");
+}
+
+#[test]
+fn format_mode_sticky() {
+    assert_eq!(crate::Entry::format_mode(0o1755), "rwxr-xr-t");
+    assert_eq!(crate::Entry::format_mode(0o1754), "rwxr-xr-T");
+}
+
+#[cfg(feature = "serde")]
+mod serde_tests {
+    use super::*;
+
+    #[test]
+    fn roundtrip_empty() {
+        let fs = MemFs::new();
+        let json = serde_json::to_string(&fs).unwrap();
+        let fs2: MemFs = serde_json::from_str(&json).unwrap();
+        assert!(fs2.is_dir("/"));
+        assert!(fs2.is_empty_dir("/"));
+    }
+
+    #[test]
+    fn roundtrip_with_files() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/a/b");
+        fs.write("/a/b/file.txt", "hello world");
+        fs.write_with_mode("/secret", "data", 0o600);
+        fs.symlink("/a/b/file.txt", "/link").unwrap();
+
+        let json = serde_json::to_string(&fs).unwrap();
+        let fs2: MemFs = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(fs2.read_to_string("/a/b/file.txt").unwrap(), "hello world");
+        assert_eq!(fs2.metadata("/secret").unwrap().mode(), 0o600);
+        assert!(fs2.is_symlink("/link"));
+        assert_eq!(fs2.read_link("/link").unwrap(), "/a/b/file.txt");
+    }
+
+    #[test]
+    fn roundtrip_preserves_settings() {
+        let mut fs = MemFs::new();
+        fs.set_current_user(1000, 1000);
+        fs.set_umask(0o077);
+        fs.set_time(500);
+        fs.write("/f", "x");
+
+        let json = serde_json::to_string(&fs).unwrap();
+        let fs2: MemFs = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(fs2.current_uid(), 1000);
+        assert_eq!(fs2.current_gid(), 1000);
+        assert_eq!(fs2.umask(), 0o077);
+        assert_eq!(fs2.time(), fs.time());
+    }
+
+    #[test]
+    fn roundtrip_preserves_timestamps() {
+        let mut fs = MemFs::new();
+        fs.write("/a", "data");
+        let mtime = fs.metadata("/a").unwrap().mtime();
+
+        let json = serde_json::to_string(&fs).unwrap();
+        let fs2: MemFs = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(fs2.metadata("/a").unwrap().mtime(), mtime);
+    }
+
+    #[test]
+    fn roundtrip_supplementary_gids() {
+        let mut fs = MemFs::new();
+        fs.add_supplementary_gid(100);
+        fs.add_supplementary_gid(200);
+
+        let json = serde_json::to_string(&fs).unwrap();
+        let fs2: MemFs = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(fs2.supplementary_gids(), &[100u32, 200u32]);
+    }
+
+    // -- Walk iterator tests ----------------------------------------------------
+
+    #[test]
+    fn walk_yields_all_entries() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/a/b");
+        fs.write("/a/b/f.txt", "x");
+        fs.write("/other", "y");
+
+        let entries: alloc::vec::Vec<_> = fs.walk().collect();
+        let paths: alloc::vec::Vec<&str> = entries.iter().map(|(p, _)| p.as_str()).collect();
+
+        assert!(paths.contains(&"/"));
+        assert!(paths.contains(&"/a"));
+        assert!(paths.contains(&"/a/b"));
+        assert!(paths.contains(&"/a/b/f.txt"));
+        assert!(paths.contains(&"/other"));
+    }
+
+    #[test]
+    fn walk_matches_iter() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/x/y");
+        fs.write("/x/y/z", "data");
+        fs.write("/top", "hi");
+
+        let walk_entries: alloc::vec::Vec<_> = fs.walk().collect();
+        let iter_entries = fs.iter();
+        assert_eq!(walk_entries.len(), iter_entries.len());
+    }
+
+    #[test]
+    fn walk_prefix_subtree() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/a/b");
+        fs.write("/a/b/f.txt", "x");
+        fs.write("/other", "y");
+
+        let entries: alloc::vec::Vec<_> = fs.walk_prefix("/a").collect();
+        let paths: alloc::vec::Vec<&str> = entries.iter().map(|(p, _)| p.as_str()).collect();
+
+        assert!(paths.contains(&"/a"));
+        assert!(paths.contains(&"/a/b"));
+        assert!(paths.contains(&"/a/b/f.txt"));
+        assert!(!paths.contains(&"/other"));
+    }
+
+    #[test]
+    fn walk_prefix_missing() {
+        let fs = MemFs::new();
+        let entries: alloc::vec::Vec<_> = fs.walk_prefix("/nope").collect();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn walk_empty_fs() {
+        let fs = MemFs::new();
+        let entries: alloc::vec::Vec<_> = fs.walk().collect();
+        assert_eq!(entries.len(), 1); // just root
+    }
+
+    // -- ReadDirIter tests ------------------------------------------------------
+
+    #[test]
+    fn read_dir_iter_yields_entries() {
+        let mut fs = MemFs::new();
+        fs.write("/a", "x");
+        fs.write("/b", "y");
+        fs.create_dir("/c").unwrap();
+
+        let entries: alloc::vec::Vec<_> = fs.read_dir_iter("/").unwrap().collect();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].name, "a");
+        assert_eq!(entries[1].name, "b");
+        assert_eq!(entries[2].name, "c");
+    }
+
+    #[test]
+    fn read_dir_iter_exact_size() {
+        let mut fs = MemFs::new();
+        fs.write("/a", "x");
+        fs.write("/b", "y");
+
+        let iter = fs.read_dir_iter("/").unwrap();
+        assert_eq!(iter.len(), 2);
+    }
+
+    #[test]
+    fn read_dir_iter_not_found() {
+        let fs = MemFs::new();
+        assert!(fs.read_dir_iter("/nope").is_err());
+    }
+
+    #[test]
+    fn read_dir_iter_on_file() {
+        let mut fs = MemFs::new();
+        fs.write("/f", "x");
+        let err = fs.read_dir_iter("/f").unwrap_err();
+        assert_eq!(*err.kind(), VfsErrorKind::NotADirectory);
+    }
+
+    // -- Path safety tests ------------------------------------------------------
+
+    #[test]
+    fn normalize_dotdot_in_path() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/a/b");
+        fs.write("/a/b/file", "data");
+        // Access via unnormalized path with ..
+        assert_eq!(fs.read_to_string("/a/b/../b/file").unwrap(), "data");
+    }
+
+    #[test]
+    fn normalize_dot_in_path() {
+        let mut fs = MemFs::new();
+        fs.write("/file", "x");
+        assert_eq!(fs.read_to_string("/./file").unwrap(), "x");
+    }
+
+    #[test]
+    fn canonical_path_resolves_symlinks() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/real/dir");
+        fs.write("/real/dir/file", "x");
+        fs.symlink("/real/dir", "/link").unwrap();
+        let canon = fs.canonical_path("/link/file").unwrap();
+        assert_eq!(canon, "/real/dir/file");
+    }
+
+    #[test]
+    fn canonical_path_normalizes() {
+        let mut fs = MemFs::new();
+        fs.create_dir_all("/a/b");
+        let canon = fs.canonical_path("/a/b/../b").unwrap();
+        assert_eq!(canon, "/a/b");
+    }
+
+    #[test]
+    fn canonical_path_not_found() {
+        let fs = MemFs::new();
+        assert!(fs.canonical_path("/nope").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_empty() {
+        assert!(crate::path::validate("").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_relative() {
+        assert!(crate::path::validate("relative/path").is_err());
+    }
+
+    #[test]
+    fn validate_accepts_absolute() {
+        assert!(crate::path::validate("/").is_ok());
+        assert!(crate::path::validate("/a/b").is_ok());
+    }
 }

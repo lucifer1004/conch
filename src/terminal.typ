@@ -229,12 +229,10 @@
       }
 
       // Output frame
-      let session-after = _execute-session(
-        user,
-        sys.hostname,
-        files,
-        exec-cmds.slice(0, i + 1),
-      )
+      let session-after = _execute-session(user, sys, exec-cmds.slice(
+        0,
+        i + 1,
+      ))
       frames += (frame(session-after, ""),)
     }
 
