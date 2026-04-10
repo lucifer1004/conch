@@ -633,6 +633,7 @@ fn root_bypasses_parent_dir_write_check() -> Result<(), VfsError> {
 
 // -- Security fix 3: FileHandle Write respects access mode -------------------
 
+#[cfg(feature = "std")]
 #[test]
 fn read_only_handle_rejects_write() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
@@ -643,6 +644,7 @@ fn read_only_handle_rejects_write() -> Result<(), VfsError> {
     Ok(())
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn writable_handle_accepts_write() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
@@ -656,6 +658,7 @@ fn writable_handle_accepts_write() -> Result<(), VfsError> {
     Ok(())
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn commit_on_readonly_handle_is_noop() -> Result<(), VfsError> {
     let mut fs = MemFs::new();

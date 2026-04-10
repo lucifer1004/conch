@@ -211,7 +211,7 @@ package dest: build
     # README images (committed to repo but excluded from download bundle via typst.toml)
     cp demo/demo.gif demo/touying.gif demo/frame.png demo/shell.png demo/pipes.png \
        demo/permissions.png demo/script.png demo/themes.png demo/chrome.png \
-       demo/paginate-1.png demo/paginate-2.png "$dest/demo/"
+       demo/paginate-1.png demo/paginate-2.png demo/include-files.png "$dest/demo/"
     echo "Packaged to $dest"
     echo "Files:"
     find "$dest" -type f | sort | while read -r f; do
