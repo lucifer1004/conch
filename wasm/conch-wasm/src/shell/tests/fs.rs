@@ -325,11 +325,11 @@ fn readlink_shows_target() {
 }
 
 #[test]
-fn ln_without_s_fails() {
+fn ln_hard_link_missing_source_fails() {
     let mut s = shell();
     let (out, code, _) = s.run_line("ln a b");
     assert_eq!(code, 1);
-    assert!(out.contains("hard links"), "got {:?}", out);
+    assert!(out.contains("ln:"), "got {:?}", out);
 }
 
 #[test]
@@ -546,4 +546,147 @@ fn tee_multiple_files() {
     let (b, _, _) = s.run_line("cat b.txt");
     assert_eq!(a, "hello");
     assert_eq!(b, "hello");
+}
+
+// -- Hard link tests --------------------------------------------------------
+
+#[test]
+fn ln_hard_link_creates_shared_file() {
+    let mut s = shell();
+    s.run_line("echo hello > orig.txt");
+    let (out, code, _) = s.run_line("ln orig.txt link.txt");
+    assert_eq!(code, 0);
+    assert_eq!(out, "");
+    let (content, _, _) = s.run_line("cat link.txt");
+    assert_eq!(content, "hello");
+}
+
+#[test]
+fn ln_hard_link_shares_content_via_append() {
+    let mut s = shell();
+    s.run_line("echo hello > orig.txt");
+    s.run_line("ln orig.txt link.txt");
+    s.run_line("echo world >> orig.txt");
+    let (content, _, _) = s.run_line("cat link.txt");
+    assert!(content.contains("hello"), "got: {content}");
+    assert!(content.contains("world"), "got: {content}");
+}
+
+#[test]
+fn ln_hard_link_to_directory_fails() {
+    let mut s = shell();
+    s.run_line("mkdir mydir");
+    let (out, code, _) = s.run_line("ln mydir link");
+    assert_ne!(code, 0);
+    assert!(
+        out.contains("Permission denied") || out.contains("denied"),
+        "got: {out}"
+    );
+}
+
+#[test]
+fn ln_hard_link_to_missing_source_fails() {
+    let mut s = shell();
+    let (_, code, _) = s.run_line("ln nope.txt link.txt");
+    assert_ne!(code, 0);
+}
+
+// -- ls -l enriched output --------------------------------------------------
+
+#[test]
+fn ls_long_shows_size_and_nlink() {
+    let mut s = shell();
+    s.run_line("echo hello > f.txt");
+    let (out, code, _) = s.run_line("ls -l");
+    assert_eq!(code, 0);
+    // Should contain nlink count and file size
+    assert!(out.contains("1"), "expected nlink in output: {out}");
+    assert!(
+        out.contains("5") || out.contains("6"),
+        "expected file size in output: {out}"
+    );
+}
+
+#[test]
+fn ls_long_shows_symlink_type() {
+    let mut s = shell();
+    s.run_line("echo x > target.txt");
+    s.run_line("ln -s target.txt link.txt");
+    let (out, code, _) = s.run_line("ls -l");
+    assert_eq!(code, 0);
+    assert!(
+        out.contains("l"),
+        "expected symlink type 'l' in output: {out}"
+    );
+}
+
+// -- stat enriched output ---------------------------------------------------
+
+#[test]
+fn stat_shows_inode_and_links() {
+    let mut s = shell();
+    s.run_line("echo data > f.txt");
+    let (out, code, _) = s.run_line("stat f.txt");
+    assert_eq!(code, 0);
+    assert!(
+        out.contains("Inode:"),
+        "expected Inode in stat output: {out}"
+    );
+    assert!(
+        out.contains("Links:"),
+        "expected Links in stat output: {out}"
+    );
+}
+
+#[test]
+fn stat_hard_link_shows_nlink_2() {
+    let mut s = shell();
+    s.run_line("echo data > a.txt");
+    s.run_line("ln a.txt b.txt");
+    let (out, _, _) = s.run_line("stat a.txt");
+    assert!(out.contains("Links: 2"), "expected nlink=2 in stat: {out}");
+}
+
+// -- rmdir uses is_empty_dir ------------------------------------------------
+
+#[test]
+fn rmdir_fails_on_nonempty_uses_is_empty_dir() {
+    let mut s = shell();
+    s.run_line("mkdir -p d/sub");
+    let (out, code, _) = s.run_line("rmdir d");
+    assert_ne!(code, 0);
+    assert!(
+        out.contains("not empty") || out.contains("Directory not empty"),
+        "got: {out}"
+    );
+}
+
+// -- realpath resolves symlinks ---------------------------------------------
+
+#[test]
+fn realpath_resolves_symlink() {
+    let mut s = shell();
+    s.run_line("mkdir -p real/dir");
+    s.run_line("echo x > real/dir/file.txt");
+    s.run_line("ln -s real/dir link");
+    let (out, code, _) = s.run_line("realpath link/file.txt");
+    assert_eq!(code, 0);
+    assert!(out.trim().ends_with("/real/dir/file.txt"), "got: {out}");
+}
+
+// -- find uses walk_prefix --------------------------------------------------
+
+#[test]
+fn find_in_subtree() {
+    let mut s = shell();
+    s.run_line("mkdir -p a/b");
+    s.run_line("echo x > a/b/f.txt");
+    s.run_line("echo y > other.txt");
+    let (out, code, _) = s.run_line("find a -name f.txt");
+    assert_eq!(code, 0);
+    assert!(out.contains("f.txt"), "got: {out}");
+    assert!(
+        !out.contains("other.txt"),
+        "should not find other.txt: {out}"
+    );
 }

@@ -114,12 +114,12 @@ impl Shell {
             return ("realpath: missing operand".into(), 1);
         }
         let path = self.resolve(&args[0]);
-        if !self.fs.exists(&path) {
-            return (
+        match self.fs.canonical_path(&path) {
+            Ok(canonical) => (canonical, 0),
+            Err(_) => (
                 format!("realpath: {}: No such file or directory", args[0]),
                 1,
-            );
+            ),
         }
-        (path, 0)
     }
 }

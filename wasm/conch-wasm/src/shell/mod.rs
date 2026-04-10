@@ -138,16 +138,17 @@ impl Shell {
                 fs.create_dir_all(parent);
             }
 
-            let entry = match spec {
-                FileSpec::Content(content) => FsEntry::file(content.clone()),
+            match spec {
+                FileSpec::Content(content) => {
+                    fs.write(&full, content.as_bytes());
+                }
                 FileSpec::WithMode { content, mode } => {
                     // User provides mode as "octal-looking" decimal (e.g., 755).
                     // Convert: 755 decimal → parse digits as octal → 0o755.
                     let octal = parse_mode_digits(*mode);
-                    FsEntry::file_with_mode(content.clone(), octal)
+                    fs.write_with_mode(&full, content.as_bytes(), octal);
                 }
             };
-            fs.insert(full, entry);
         }
 
         let mut env = BTreeMap::new();
@@ -400,20 +401,18 @@ impl Shell {
             }
             match redir.typ {
                 crate::parser::RedirectType::Overwrite => {
-                    self.fs.insert(target, FsEntry::file(output));
+                    self.fs.write(&target, output.as_bytes());
                 }
                 crate::parser::RedirectType::Append => {
-                    let existing = self
-                        .fs
-                        .read_to_string(&target)
-                        .map(|s| s.to_string())
-                        .unwrap_or_default();
-                    let appended = if existing.is_empty() {
-                        output
+                    if !self.fs.exists(&target) {
+                        self.fs.write(&target, output.as_bytes());
                     } else {
-                        format!("{}\n{}", existing, output)
-                    };
-                    self.fs.insert(target, FsEntry::file(appended));
+                        let needs_newline = self.fs.read(&target).is_ok_and(|b| !b.is_empty());
+                        if needs_newline {
+                            let _ = self.fs.append(&target, b"\n");
+                        }
+                        let _ = self.fs.append(&target, output.as_bytes());
+                    }
                 }
             }
             return (String::new(), last_code, None); // redirect suppresses display

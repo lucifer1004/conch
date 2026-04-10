@@ -34,10 +34,12 @@ impl Shell {
             let mode_octal = format!("{:04o}", mode);
 
             out.push(format!(
-                "  File: {}\n  Size: {:<12}Type: {}\n  Mode: ({}/{}{})\n  Uid: {:<8} Gid: {}",
+                "  File: {}\n  Size: {:<12}Type: {}\n  Inode: {:<8}Links: {}\n  Mode: ({}/{}{})\n  Uid: {:<8} Gid: {}",
                 name,
                 size,
                 type_str,
+                meta.ino(),
+                meta.nlink(),
                 mode_octal,
                 if meta.is_dir() { "d" } else { "-" },
                 mode_str,
@@ -200,19 +202,10 @@ impl Shell {
             }
 
             // It's a directory — collect all entries under it
-            let prefix = if root == "/" {
-                "/".to_string()
-            } else {
-                format!("{}/", root)
-            };
-
             let mut total: usize = 0;
             let mut entries_out: Vec<(String, usize)> = Vec::new();
 
-            for (path, entry) in self.fs.iter() {
-                if path != root && !path.starts_with(&prefix) {
-                    continue;
-                }
+            for (path, entry) in self.fs.walk_prefix(&root) {
                 let size = entry.len();
                 total += size;
                 if !summary {

@@ -49,24 +49,33 @@ impl Shell {
             .filter(|(name, _, _)| show_all || !name.starts_with('.'))
             .map(|(name, is_dir, mode)| {
                 if long {
-                    let ty = if *is_dir { "d" } else { "-" };
                     let ms = FsEntry::format_mode(*mode);
+                    let entry_path = format!("{}/{}", target, name);
+                    let is_symlink = self.fs.is_symlink(&entry_path);
+                    let ty = if *is_dir {
+                        "d"
+                    } else if is_symlink {
+                        "l"
+                    } else {
+                        "-"
+                    };
                     let display = if *is_dir {
                         format!("{}{}/{}", ansi::BOLD_BLUE, name, ansi::RESET)
                     } else {
                         name.clone()
                     };
-                    let entry_path = format!("{}/{}", target, name);
-                    let (owner, group) = if let Some(e) = self.fs.get(&entry_path) {
-                        let uid = e.uid();
-                        let gid = e.gid();
-                        let owner = self.users.uid_to_name(uid);
-                        let group_name = self.users.gid_to_name(gid);
-                        (owner, group_name)
-                    } else {
-                        (self.user.clone(), self.user.clone())
-                    };
-                    format!("{}{}  {} {}  {}", ty, ms, owner, group, display)
+                    let (owner, group, nlink, size) =
+                        if let Ok(meta) = self.fs.metadata(&entry_path) {
+                            let owner = self.users.uid_to_name(meta.uid());
+                            let group_name = self.users.gid_to_name(meta.gid());
+                            (owner, group_name, meta.nlink(), meta.len())
+                        } else {
+                            (self.user.clone(), self.user.clone(), 1, 0)
+                        };
+                    format!(
+                        "{}{} {:>2} {} {} {:>5} {}",
+                        ty, ms, nlink, owner, group, size, display
+                    )
                 } else if *is_dir {
                     format!("{}{}/{}", ansi::BOLD_BLUE, name, ansi::RESET)
                 } else {
@@ -297,18 +306,9 @@ impl Shell {
         let glob = name_pattern
             .as_ref()
             .and_then(|p| Glob::new(p).ok().map(|g| g.compile_matcher()));
-        let prefix = if root == "/" {
-            "/".to_string()
-        } else {
-            format!("{}/", root)
-        };
 
         let mut results = Vec::new();
-        for (p, entry) in self.fs.iter() {
-            if p != root && !p.starts_with(&prefix) {
-                continue;
-            }
-
+        for (p, entry) in self.fs.walk_prefix(&root) {
             if let Some(ref tf) = type_filter {
                 match tf.as_str() {
                     "f" if !entry.is_file() => continue,
@@ -359,19 +359,17 @@ impl Shell {
                 }
             }
             if append {
-                let existing = self
-                    .fs
-                    .read_to_string(&path)
-                    .map(|s| s.to_string())
-                    .unwrap_or_default();
-                let content = if existing.is_empty() {
-                    input.clone()
+                if !self.fs.exists(&path) {
+                    self.fs.write(&path, input.as_bytes());
                 } else {
-                    format!("{}\n{}", existing, input)
-                };
-                self.fs.insert(path, FsEntry::file(content));
+                    let needs_newline = self.fs.read(&path).is_ok_and(|b| !b.is_empty());
+                    if needs_newline {
+                        let _ = self.fs.append(&path, b"\n");
+                    }
+                    let _ = self.fs.append(&path, input.as_bytes());
+                }
             } else {
-                self.fs.insert(path, FsEntry::file(input.clone()));
+                self.fs.write(&path, input.as_bytes());
             }
         }
 
@@ -435,8 +433,7 @@ impl Shell {
                 _ => {}
             }
             // Check if directory is empty
-            let entries = self.fs.read_dir(&path).unwrap_or_default();
-            if !entries.is_empty() {
+            if !self.fs.is_empty_dir(&path) {
                 return (
                     format!("rmdir: failed to remove '{}': Directory not empty", arg),
                     1,
@@ -496,12 +493,17 @@ impl Shell {
         if positional.len() < 2 {
             return ("ln: missing operand".into(), 1);
         }
-        if !symbolic {
-            return ("ln: hard links not supported".into(), 1);
-        }
 
         let target = positional[0];
         let link_path = self.resolve(positional[1]);
+
+        if !symbolic {
+            let target_path = self.resolve(target);
+            if let Err(e) = self.fs.hard_link(&target_path, &link_path) {
+                return (format!("ln: {}: {}", positional[1], e), 1);
+            }
+            return (String::new(), 0);
+        }
         if self.fs.exists(&link_path) {
             return (
                 format!(
@@ -562,14 +564,8 @@ impl Shell {
         let result = (|| {
             for (path, orig) in targets.iter().zip(orig_args.iter()) {
                 if recursive && self.fs.is_dir(path) {
-                    let prefix = format!("{}/", path);
-                    let all_paths: Vec<String> = self
-                        .fs
-                        .iter()
-                        .into_iter()
-                        .filter(|(p, _)| p == path || p.starts_with(&prefix))
-                        .map(|(p, _)| p.to_string())
-                        .collect();
+                    let all_paths: Vec<String> =
+                        self.fs.walk_prefix(path).map(|(p, _)| p).collect();
                     for p in all_paths {
                         if self.fs.chown(&p, uid, gid).is_err() {
                             return (
@@ -632,14 +628,8 @@ impl Shell {
         let result = (|| {
             for (path, orig) in targets.iter().zip(orig_args.iter()) {
                 if recursive && self.fs.is_dir(path) {
-                    let prefix = format!("{}/", path);
-                    let all_paths: Vec<String> = self
-                        .fs
-                        .iter()
-                        .into_iter()
-                        .filter(|(p, _)| p == path || p.starts_with(&prefix))
-                        .map(|(p, _)| p.to_string())
-                        .collect();
+                    let all_paths: Vec<String> =
+                        self.fs.walk_prefix(path).map(|(p, _)| p).collect();
                     for p in all_paths {
                         let uid = self.fs.get(&p).map(|e| e.uid()).unwrap_or(0);
                         if self.fs.chown(&p, uid, gid).is_err() {
