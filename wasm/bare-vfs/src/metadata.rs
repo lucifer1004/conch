@@ -12,6 +12,7 @@ pub struct Metadata {
     ctime: u64,
     atime: u64,
     nlink: u64,
+    ino: u64,
 }
 
 impl Metadata {
@@ -25,6 +26,8 @@ impl Metadata {
         mtime: u64,
         ctime: u64,
         atime: u64,
+        nlink: u64,
+        ino: u64,
     ) -> Self {
         Metadata {
             is_file,
@@ -36,10 +39,12 @@ impl Metadata {
             mtime,
             ctime,
             atime,
-            nlink: 1,
+            nlink,
+            ino,
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_symlink(
         mode: u16,
         uid: u32,
@@ -47,6 +52,8 @@ impl Metadata {
         mtime: u64,
         ctime: u64,
         atime: u64,
+        nlink: u64,
+        ino: u64,
     ) -> Self {
         Metadata {
             is_file: false,
@@ -58,7 +65,8 @@ impl Metadata {
             mtime,
             ctime,
             atime,
-            nlink: 1,
+            nlink,
+            ino,
         }
     }
 
@@ -132,9 +140,16 @@ impl Metadata {
         self.atime
     }
 
-    /// Returns the hard link count (always 1; no hard links in this VFS).
+    /// Returns the hard link count. For files, this reflects actual hard links.
+    /// For directories, this is always 2 (the directory itself and its `.` entry);
+    /// subdirectory count is not tracked.
     pub fn nlink(&self) -> u64 {
         self.nlink
+    }
+
+    /// Returns the inode number.
+    pub fn ino(&self) -> u64 {
+        self.ino
     }
 }
 
@@ -144,7 +159,7 @@ mod tests {
 
     #[test]
     fn file_metadata() {
-        let m = Metadata::new(true, 5, 0o755, 0, 0, 10, 20, 8);
+        let m = Metadata::new(true, 5, 0o755, 0, 0, 10, 20, 8, 1, 42);
         assert!(m.is_file());
         assert!(!m.is_dir());
         assert_eq!(m.len(), 5);
@@ -159,11 +174,12 @@ mod tests {
         assert_eq!(m.ctime(), 20);
         assert_eq!(m.atime(), 8);
         assert_eq!(m.nlink(), 1);
+        assert_eq!(m.ino(), 42);
     }
 
     #[test]
     fn dir_metadata() {
-        let m = Metadata::new(false, 0, 0o500, 1000, 1000, 5, 5, 3);
+        let m = Metadata::new(false, 0, 0o500, 1000, 1000, 5, 5, 3, 1, 2);
         assert!(m.is_dir());
         assert!(!m.is_file());
         assert_eq!(m.len(), 0);
@@ -178,5 +194,6 @@ mod tests {
         assert_eq!(m.ctime(), 5);
         assert_eq!(m.atime(), 3);
         assert_eq!(m.nlink(), 1);
+        assert_eq!(m.ino(), 2);
     }
 }

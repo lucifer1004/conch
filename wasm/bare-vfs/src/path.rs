@@ -3,7 +3,16 @@ use alloc::vec::Vec;
 
 use crate::error::{VfsError, VfsErrorKind};
 
-/// Normalize an absolute path: resolve `.` and `..`, collapse separators.
+/// Split an absolute path into components. "/" -> empty vec, "/a/b" -> ["a", "b"].
+pub(crate) fn split_path(path: &str) -> Vec<&str> {
+    path.split('/').filter(|s| !s.is_empty()).collect()
+}
+
+/// Normalize a path by resolving `.` and `..` segments and collapsing
+/// duplicate separators.
+///
+/// If the path does not start with `/`, it is treated as relative to root
+/// (i.e., the leading `/` is implied).
 ///
 /// ```
 /// assert_eq!(bare_vfs::normalize("/a/b/../c/./d"), "/a/c/d");

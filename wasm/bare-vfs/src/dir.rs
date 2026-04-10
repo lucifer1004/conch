@@ -17,4 +17,6 @@ pub struct DirEntry {
     pub mtime: u64,
     /// Content size in bytes (0 for directories and symlinks).
     pub size: usize,
+    /// Inode number.
+    pub ino: u64,
 }

@@ -79,6 +79,11 @@ impl OpenOptions {
     /// Open the file at `path` on the given filesystem.
     ///
     /// This may create or truncate the file depending on the flags set.
+    ///
+    /// **Important**: `FileHandle` operates on an in-memory buffer. Writes are
+    /// NOT automatically persisted. You must call [`MemFs::commit`] to save
+    /// changes back to the filesystem. Dropping a written handle without
+    /// committing will silently discard all changes.
     pub fn open(&self, fs: &mut MemFs, path: &str) -> Result<FileHandle, VfsError> {
         let exists = fs.exists(path);
 

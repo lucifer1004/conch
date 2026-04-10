@@ -1684,12 +1684,17 @@ fn set_atime_not_found() {
 }
 
 #[test]
-fn nlink_always_one() {
+fn nlink_file_is_one() {
     let mut fs = MemFs::new();
     fs.write("/f.txt", "hello");
-    fs.create_dir("/d").unwrap();
     assert_eq!(fs.metadata("/f.txt").unwrap().nlink(), 1);
-    assert_eq!(fs.metadata("/d").unwrap().nlink(), 1);
+}
+
+#[test]
+fn nlink_dir_is_two() {
+    let mut fs = MemFs::new();
+    fs.create_dir("/d").unwrap();
+    assert_eq!(fs.metadata("/d").unwrap().nlink(), 2);
 }
 
 #[test]
@@ -1801,6 +1806,102 @@ fn format_mode_sticky() {
     assert_eq!(crate::Entry::format_mode(0o1754), "rwxr-xr-T");
 }
 
+// -- hard link tests --------------------------------------------------------
+
+#[test]
+fn hard_link_creates_second_name() {
+    let mut fs = MemFs::new();
+    fs.write("/a.txt", "hello");
+    fs.hard_link("/a.txt", "/b.txt").unwrap();
+    assert_eq!(fs.read_to_string("/b.txt").unwrap(), "hello");
+}
+
+#[test]
+fn hard_link_append_visible_through_both() {
+    let mut fs = MemFs::new();
+    fs.write("/a.txt", "hello");
+    fs.hard_link("/a.txt", "/b.txt").unwrap();
+    fs.append("/a.txt", b" world").unwrap();
+    assert_eq!(fs.read_to_string("/b.txt").unwrap(), "hello world");
+}
+
+#[test]
+fn hard_link_shares_metadata() {
+    let mut fs = MemFs::new();
+    fs.write("/a.txt", "x");
+    fs.hard_link("/a.txt", "/b.txt").unwrap();
+    fs.set_mode("/a.txt", 0o755).unwrap();
+    assert_eq!(fs.metadata("/b.txt").unwrap().mode(), 0o755);
+}
+
+#[test]
+fn hard_link_nlink_increments() {
+    let mut fs = MemFs::new();
+    fs.write("/a.txt", "x");
+    assert_eq!(fs.metadata("/a.txt").unwrap().nlink(), 1);
+    fs.hard_link("/a.txt", "/b.txt").unwrap();
+    assert_eq!(fs.metadata("/a.txt").unwrap().nlink(), 2);
+    assert_eq!(fs.metadata("/b.txt").unwrap().nlink(), 2);
+}
+
+#[test]
+fn hard_link_remove_decrements_nlink() {
+    let mut fs = MemFs::new();
+    fs.write("/a.txt", "x");
+    fs.hard_link("/a.txt", "/b.txt").unwrap();
+    fs.remove("/a.txt");
+    assert_eq!(fs.metadata("/b.txt").unwrap().nlink(), 1);
+    assert_eq!(fs.read_to_string("/b.txt").unwrap(), "x");
+}
+
+#[test]
+fn hard_link_to_dir_fails() {
+    let mut fs = MemFs::new();
+    fs.create_dir("/d").unwrap();
+    assert!(fs.hard_link("/d", "/d2").is_err());
+}
+
+#[test]
+fn hard_link_dst_exists_fails() {
+    let mut fs = MemFs::new();
+    fs.write("/a", "x");
+    fs.write("/b", "y");
+    assert!(fs.hard_link("/a", "/b").is_err());
+}
+
+#[test]
+fn hard_link_not_found() {
+    let mut fs = MemFs::new();
+    assert!(fs.hard_link("/nope", "/b").is_err());
+}
+
+#[test]
+fn hard_link_same_ino() {
+    let mut fs = MemFs::new();
+    fs.write("/a", "x");
+    fs.hard_link("/a", "/b").unwrap();
+    assert_eq!(
+        fs.metadata("/a").unwrap().ino(),
+        fs.metadata("/b").unwrap().ino()
+    );
+}
+
+#[test]
+fn hard_link_write_visible_through_both() {
+    let mut fs = MemFs::new();
+    fs.write("/a.txt", "original");
+    fs.hard_link("/a.txt", "/b.txt").unwrap();
+    // Overwrite via write() — should update in-place, preserving the hard link
+    fs.write("/a.txt", "updated");
+    assert_eq!(fs.read_to_string("/b.txt").unwrap(), "updated");
+    // Both should still share the same inode
+    assert_eq!(
+        fs.metadata("/a.txt").unwrap().ino(),
+        fs.metadata("/b.txt").unwrap().ino()
+    );
+    assert_eq!(fs.metadata("/a.txt").unwrap().nlink(), 2);
+}
+
 #[cfg(feature = "serde")]
 mod serde_tests {
     use super::*;
@@ -1858,6 +1959,32 @@ mod serde_tests {
         let fs2: MemFs = serde_json::from_str(&json).unwrap();
 
         assert_eq!(fs2.metadata("/a").unwrap().mtime(), mtime);
+    }
+
+    #[test]
+    fn roundtrip_hard_links() {
+        let mut fs = MemFs::new();
+        fs.write("/a.txt", "shared");
+        fs.hard_link("/a.txt", "/b.txt").unwrap();
+
+        let json = serde_json::to_string(&fs).unwrap();
+        let fs2: MemFs = serde_json::from_str(&json).unwrap();
+
+        // Both names exist and share content
+        assert_eq!(fs2.read_to_string("/a.txt").unwrap(), "shared");
+        assert_eq!(fs2.read_to_string("/b.txt").unwrap(), "shared");
+
+        // They share the same inode (hard link preserved)
+        assert_eq!(
+            fs2.metadata("/a.txt").unwrap().ino(),
+            fs2.metadata("/b.txt").unwrap().ino()
+        );
+        assert_eq!(fs2.metadata("/a.txt").unwrap().nlink(), 2);
+
+        // Mutating through one name is visible through the other
+        let mut fs2 = fs2;
+        fs2.append("/a.txt", b" data").unwrap();
+        assert_eq!(fs2.read_to_string("/b.txt").unwrap(), "shared data");
     }
 
     #[test]
@@ -2029,5 +2156,125 @@ mod serde_tests {
     fn validate_accepts_absolute() {
         assert!(crate::path::validate("/").is_ok());
         assert!(crate::path::validate("/a/b").is_ok());
+    }
+
+    // -- Review fix regression tests ----------------------------------------
+
+    #[test]
+    fn write_preserves_hard_link() {
+        // Issue #1: write() used to break hard links by allocating new inode
+        let mut fs = MemFs::new();
+        fs.write("/a", "original");
+        fs.hard_link("/a", "/b").unwrap();
+        let ino_before = fs.metadata("/a").unwrap().ino();
+
+        fs.write("/a", "updated");
+
+        // Same inode (not a new one)
+        assert_eq!(fs.metadata("/a").unwrap().ino(), ino_before);
+        // Visible through both names
+        assert_eq!(fs.read_to_string("/b").unwrap(), "updated");
+        // nlink preserved
+        assert_eq!(fs.metadata("/a").unwrap().nlink(), 2);
+    }
+
+    #[test]
+    fn write_with_mode_preserves_hard_link() {
+        let mut fs = MemFs::new();
+        fs.write("/a", "x");
+        fs.hard_link("/a", "/b").unwrap();
+        fs.write_with_mode("/a", "y", 0o755);
+        assert_eq!(fs.read_to_string("/b").unwrap(), "y");
+        assert_eq!(fs.metadata("/b").unwrap().mode(), 0o755);
+    }
+
+    #[test]
+    fn rename_to_missing_parent_fails() {
+        // Issue #4: rename() used to orphan inodes when dst parent was missing
+        let mut fs = MemFs::new();
+        fs.write("/a", "data");
+        let result = fs.rename("/a", "/no/such/dir/b");
+        assert!(result.is_err());
+        // Source should still exist (not orphaned)
+        assert_eq!(fs.read_to_string("/a").unwrap(), "data");
+    }
+
+    #[test]
+    fn copy_to_missing_parent_fails() {
+        // Issue #6: copy() used to leak inodes when dst parent was missing
+        let mut fs = MemFs::new();
+        fs.write("/a", "data");
+        let result = fs.copy("/a", "/no/such/dir/b");
+        assert!(result.is_err());
+        // Source unchanged
+        assert_eq!(fs.read_to_string("/a").unwrap(), "data");
+    }
+
+    #[test]
+    fn symlink_fails_if_link_path_exists() {
+        // Issue #7: symlink() used to silently overwrite existing entries
+        let mut fs = MemFs::new();
+        fs.write("/existing", "data");
+        let result = fs.symlink("/target", "/existing");
+        assert!(matches!(
+            result,
+            Err(ref e) if *e.kind() == VfsErrorKind::AlreadyExists
+        ));
+        // Original file untouched
+        assert!(fs.is_file("/existing"));
+        assert_eq!(fs.read_to_string("/existing").unwrap(), "data");
+    }
+
+    #[test]
+    fn symlink_fails_if_dir_exists_at_path() {
+        let mut fs = MemFs::new();
+        fs.create_dir("/d").unwrap();
+        let result = fs.symlink("/target", "/d");
+        assert!(result.is_err());
+        assert!(fs.is_dir("/d"));
+    }
+
+    #[test]
+    fn clone_memfs_is_independent() {
+        // Issue #9: MemFs now implements Clone
+        let mut fs = MemFs::new();
+        fs.write("/a", "hello");
+        let mut clone = fs.clone();
+        clone.write("/a", "changed");
+        // Original unaffected
+        assert_eq!(fs.read_to_string("/a").unwrap(), "hello");
+        assert_eq!(clone.read_to_string("/a").unwrap(), "changed");
+    }
+
+    #[test]
+    fn hard_link_nlink_after_remove_all_links() {
+        // Verify inode is freed when last link is removed
+        let mut fs = MemFs::new();
+        fs.write("/a", "data");
+        fs.hard_link("/a", "/b").unwrap();
+        fs.remove("/a");
+        fs.remove("/b");
+        // Both paths should be gone
+        assert!(!fs.exists("/a"));
+        assert!(!fs.exists("/b"));
+    }
+
+    #[test]
+    fn write_to_nonexistent_creates_new_inode() {
+        // write() to new path should still work (not just in-place update)
+        let mut fs = MemFs::new();
+        fs.write("/new", "content");
+        assert_eq!(fs.read_to_string("/new").unwrap(), "content");
+        assert_eq!(fs.metadata("/new").unwrap().nlink(), 1);
+    }
+
+    #[test]
+    fn write_overwrites_dir_creates_new_inode() {
+        // write() over a directory should replace it
+        let mut fs = MemFs::new();
+        fs.create_dir("/d").unwrap();
+        fs.write("/d", "now a file");
+        assert!(fs.is_file("/d"));
+        assert_eq!(fs.read_to_string("/d").unwrap(), "now a file");
     }
 }

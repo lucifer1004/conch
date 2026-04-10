@@ -1,19 +1,27 @@
 use alloc::collections::btree_map;
+use alloc::collections::BTreeMap;
 use alloc::string::String;
 
 use crate::dir::DirEntry;
 
-use super::node::TreeNode;
+use super::inode::{Inode, InodeKind};
 
 /// Iterator over directory entries, yielding [`DirEntry`] values.
 #[derive(Debug)]
 pub struct ReadDirIter<'a> {
-    inner: btree_map::Iter<'a, String, TreeNode>,
+    inodes: &'a BTreeMap<u64, Inode>,
+    inner: btree_map::Iter<'a, String, u64>,
 }
 
 impl<'a> ReadDirIter<'a> {
-    pub(crate) fn new(iter: btree_map::Iter<'a, String, TreeNode>) -> Self {
-        ReadDirIter { inner: iter }
+    pub(crate) fn new(
+        inodes: &'a BTreeMap<u64, Inode>,
+        iter: btree_map::Iter<'a, String, u64>,
+    ) -> Self {
+        ReadDirIter {
+            inodes,
+            inner: iter,
+        }
     }
 }
 
@@ -21,17 +29,19 @@ impl<'a> Iterator for ReadDirIter<'a> {
     type Item = DirEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (name, node) = self.inner.next()?;
+        let (name, ino) = self.inner.next()?;
+        let inode = self.inodes.get(ino)?; // returns None if dangling, ending iteration
         Some(DirEntry {
             name: name.clone(),
-            is_dir: node.is_dir(),
-            is_symlink: node.is_symlink(),
-            mode: node.mode(),
-            mtime: node.mtime(),
-            size: match node {
-                TreeNode::File { content, .. } => content.len(),
+            is_dir: inode.is_dir(),
+            is_symlink: inode.is_symlink(),
+            mode: inode.mode(),
+            mtime: inode.mtime(),
+            size: match &inode.kind {
+                InodeKind::File { content } => content.len(),
                 _ => 0,
             },
+            ino: *ino,
         })
     }
 

@@ -12,6 +12,10 @@ use crate::fs::MemFs;
 /// in-memory buffer; call [`MemFs::commit`] to persist changes back to the
 /// filesystem.
 ///
+/// **Important**: Writes are NOT automatically persisted. You must call
+/// [`MemFs::commit`] to save changes back to the filesystem. Dropping a
+/// written handle without committing will silently discard all changes.
+///
 /// Obtained via [`MemFs::open`].
 #[derive(Debug)]
 pub struct FileHandle {
