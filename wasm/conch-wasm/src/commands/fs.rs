@@ -248,7 +248,17 @@ impl Shell {
     }
 
     pub fn cmd_cp(&mut self, args: &[String]) -> (String, i32) {
-        let files: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
+        let mut recursive = false;
+        let mut files: Vec<&String> = Vec::new();
+
+        for arg in args {
+            match arg.as_str() {
+                "-r" | "-R" => recursive = true,
+                s if s.starts_with('-') => {}
+                _ => files.push(arg),
+            }
+        }
+
         if files.len() < 2 {
             return ("cp: missing operand".into(), 1);
         }
@@ -264,6 +274,17 @@ impl Shell {
             }
             for src in &files[..files.len() - 1] {
                 let src_path = self.resolve(src);
+                if self.fs.is_dir(&src_path) {
+                    if !recursive {
+                        return ("cp: omitting directory".into(), 1);
+                    }
+                    let name = src_path.rsplit('/').next().unwrap_or(src.as_str());
+                    let target = format!("{}/{}", dst_path, name);
+                    if let Err(e) = self.fs.copy_recursive(&src_path, &target) {
+                        return (format!("cp: cannot copy '{}': {}", src, e), 1);
+                    }
+                    continue;
+                }
                 let content = match self.fs.read_to_string(&src_path) {
                     Ok(s) => s.to_string(),
                     Err(ref e) if *e.kind() == bare_vfs::VfsErrorKind::IsADirectory => {
@@ -288,6 +309,23 @@ impl Shell {
 
         let src_path = self.resolve(files[0]);
         let dst_path = self.resolve(files[1]);
+
+        if self.fs.is_dir(&src_path) {
+            if !recursive {
+                return ("cp: omitting directory".into(), 1);
+            }
+            let target = match self.fs.get(&dst_path) {
+                Some(e) if e.is_dir() => {
+                    let name = src_path.rsplit('/').next().unwrap_or(files[0].as_str());
+                    format!("{}/{}", dst_path, name)
+                }
+                _ => dst_path,
+            };
+            return match self.fs.copy_recursive(&src_path, &target) {
+                Ok(()) => (String::new(), 0),
+                Err(e) => (format!("cp: cannot copy '{}': {}", files[0], e), 1),
+            };
+        }
 
         let content = match self.fs.read_to_string(&src_path) {
             Ok(s) => s.to_string(),

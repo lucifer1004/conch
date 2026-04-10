@@ -48,7 +48,7 @@ fmt:
     just --fmt --unstable
     cd wasm && {{ cargo }} fmt
     {{ typstyle }} -i .
-    {{ prettier }} --write *.md
+    {{ prettier }} --write **/*.md
 
 [doc("Run Rust unit tests in wasm/ (shell, parser, ansi).")]
 [group("checks")]

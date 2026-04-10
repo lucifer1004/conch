@@ -92,3 +92,37 @@ fn sh_missing_script() {
     assert_eq!(code, 1);
     assert!(out.contains("No such file"), "got {:?}", out);
 }
+
+#[test]
+fn source_runs_script_in_current_context() {
+    let mut s = shell();
+    s.run_line("echo 'export MSG=hello' > setup.sh");
+    s.run_line("source setup.sh");
+    let (out, _, _) = s.run_line("echo $MSG");
+    assert_eq!(out, "hello");
+}
+
+#[test]
+fn dot_is_alias_for_source() {
+    let mut s = shell();
+    s.run_line("echo 'export X=42' > env.sh");
+    s.run_line(". env.sh");
+    let (out, _, _) = s.run_line("echo $X");
+    assert_eq!(out, "42");
+}
+
+#[test]
+fn source_missing_file_fails() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("source nope.sh");
+    assert_ne!(code, 0);
+    assert!(out.contains("nope.sh"), "got {:?}", out);
+}
+
+#[test]
+fn source_no_args_fails() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("source");
+    assert_eq!(code, 2);
+    assert!(out.contains("filename"), "got {:?}", out);
+}

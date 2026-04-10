@@ -113,6 +113,18 @@ impl Shell {
         (dir.to_string(), 0)
     }
 
+    pub fn cmd_unset(&mut self, args: &[String]) -> (String, i32) {
+        for arg in args {
+            self.env.remove(arg);
+        }
+        (String::new(), 0)
+    }
+
+    pub fn cmd_sleep(&self, _args: &[String]) -> (String, i32) {
+        // No-op in WASM — cannot actually sleep
+        (String::new(), 0)
+    }
+
     pub fn cmd_realpath(&self, args: &[String]) -> (String, i32) {
         if args.is_empty() {
             return ("realpath: missing operand".into(), 1);

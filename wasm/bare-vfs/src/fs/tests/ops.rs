@@ -416,3 +416,146 @@ fn truncate_updates_timestamps() -> Result<(), VfsError> {
     assert!(m.ctime() > t1);
     Ok(())
 }
+
+// -- remove_file / remove_dir -----------------------------------------------
+
+#[test]
+fn remove_file_not_a_dir() -> Result<(), VfsError> {
+    let mut fs = MemFs::new();
+    fs.create_dir("/d")?;
+    let err = fs.remove_file("/d");
+    assert!(matches!(err, Err(ref e) if *e.kind() == VfsErrorKind::IsADirectory));
+    Ok(())
+}
+
+#[test]
+fn remove_dir_not_empty() -> Result<(), VfsError> {
+    let mut fs = MemFs::new();
+    fs.create_dir_all("/d/sub")?;
+    let err = fs.remove_dir("/d");
+    assert!(matches!(err, Err(ref e) if *e.kind() == VfsErrorKind::DirectoryNotEmpty));
+    Ok(())
+}
+
+#[test]
+fn remove_dir_empty() -> Result<(), VfsError> {
+    let mut fs = MemFs::new();
+    fs.create_dir("/d")?;
+    fs.remove_dir("/d")?;
+    assert!(!fs.exists("/d"));
+    Ok(())
+}
+
+#[test]
+fn remove_file_missing() -> Result<(), VfsError> {
+    let mut fs = MemFs::new();
+    let err = fs.remove_file("/nope");
+    assert!(matches!(err, Err(ref e) if *e.kind() == VfsErrorKind::NotFound));
+    Ok(())
+}
+
+#[test]
+fn remove_dir_on_file() -> Result<(), VfsError> {
+    let mut fs = MemFs::new();
+    fs.write("/f", "data")?;
+    let err = fs.remove_dir("/f");
+    assert!(matches!(err, Err(ref e) if *e.kind() == VfsErrorKind::NotADirectory));
+    Ok(())
+}
+
+#[test]
+fn remove_dir_root_fails() -> Result<(), VfsError> {
+    let mut fs = MemFs::new();
+    let err = fs.remove_dir("/");
+    assert!(err.is_err());
+    Ok(())
+}
+
+// -- copy_recursive ---------------------------------------------------------
+
+#[test]
+fn copy_recursive_dir() -> Result<(), VfsError> {
+    let mut fs = MemFs::new();
+    fs.create_dir_all("/src/sub")?;
+    fs.write("/src/a.txt", "hello")?;
+    fs.write("/src/sub/b.txt", "world")?;
+    fs.copy_recursive("/src", "/dst")?;
+    assert_eq!(fs.read_to_string("/dst/a.txt")?, "hello");
+    assert_eq!(fs.read_to_string("/dst/sub/b.txt")?, "world");
+    Ok(())
+}
+
+#[test]
+fn copy_recursive_preserves_modes() -> Result<(), VfsError> {
+    let mut fs = MemFs::new();
+    fs.set_umask(0o000);
+    fs.create_dir_all("/src")?;
+    fs.write_with_mode("/src/exec.sh", "#!/bin/sh", 0o755)?;
+    fs.copy_recursive("/src", "/dst")?;
+    assert_eq!(fs.metadata("/dst/exec.sh")?.mode(), 0o755);
+    Ok(())
+}
+
+#[test]
+fn copy_recursive_file_works_like_copy() -> Result<(), VfsError> {
+    let mut fs = MemFs::new();
+    fs.write("/f.txt", "hello")?;
+    fs.copy_recursive("/f.txt", "/g.txt")?;
+    assert_eq!(fs.read_to_string("/g.txt")?, "hello");
+    Ok(())
+}
+
+#[test]
+fn copy_recursive_missing_source() -> Result<(), VfsError> {
+    let mut fs = MemFs::new();
+    assert!(fs.copy_recursive("/nope", "/dst").is_err());
+    Ok(())
+}
+
+// -- create_dir_with_mode ---------------------------------------------------
+
+#[test]
+fn create_dir_with_mode_test() -> Result<(), VfsError> {
+    let mut fs = MemFs::new();
+    fs.set_umask(0o000);
+    fs.create_dir_with_mode("/d", 0o700)?;
+    assert_eq!(fs.metadata("/d")?.mode(), 0o700);
+    Ok(())
+}
+
+#[test]
+fn create_dir_all_with_mode_test() -> Result<(), VfsError> {
+    let mut fs = MemFs::new();
+    fs.set_umask(0o000);
+    fs.create_dir_all_with_mode("/a/b/c", 0o700)?;
+    assert_eq!(fs.metadata("/a")?.mode(), 0o700);
+    assert_eq!(fs.metadata("/a/b/c")?.mode(), 0o700);
+    Ok(())
+}
+
+// -- insert_raw public ------------------------------------------------------
+
+#[test]
+fn insert_raw_is_public() -> Result<(), VfsError> {
+    let mut fs = MemFs::new();
+    let entry = crate::Entry::file("test");
+    fs.insert_raw("/f".to_string(), entry);
+    assert_eq!(fs.read_to_string("/f")?, "test");
+    Ok(())
+}
+
+#[test]
+fn insert_raw_preserves_timestamps() -> Result<(), VfsError> {
+    let mut fs = MemFs::new();
+    fs.set_time(100);
+    fs.write("/a", "x")?;
+    let mtime = fs.metadata("/a")?.mtime();
+    let entry = fs.remove("/a");
+    if let Some(e) = entry {
+        fs.set_time(999);
+        fs.insert_raw("/b".to_string(), e);
+        // insert_raw should preserve the original timestamps, not use 999
+        assert_eq!(fs.metadata("/b")?.mtime(), mtime);
+    }
+    Ok(())
+}

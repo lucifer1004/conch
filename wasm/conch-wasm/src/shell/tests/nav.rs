@@ -211,3 +211,21 @@ fn type_unknown_command() {
     assert_ne!(code, 0);
     assert!(out.contains("not found"), "got {:?}", out);
 }
+
+#[test]
+fn unset_removes_variable() {
+    let mut s = shell();
+    s.run_line("export FOO=bar");
+    let (out, _, _) = s.run_line("echo $FOO");
+    assert_eq!(out, "bar");
+    s.run_line("unset FOO");
+    let (out2, _, _) = s.run_line("echo $FOO");
+    assert!(out2.is_empty() || out2 == "$FOO", "got {:?}", out2);
+}
+
+#[test]
+fn sleep_is_noop() {
+    let mut s = shell();
+    let (_, code, _) = s.run_line("sleep 1");
+    assert_eq!(code, 0);
+}

@@ -30,10 +30,10 @@ for entry in fs.read_dir("/src").unwrap() {
 
 ## Features
 
-| Feature | Default | Description |
-|---------|---------|-------------|
+| Feature | Default | Description                                           |
+| ------- | ------- | ----------------------------------------------------- |
 | `std`   | off     | `FileHandle` (Read/Write/Seek), `OpenOptions` builder |
-| `serde` | off     | Serialize/Deserialize for `MemFs` and public types |
+| `serde` | off     | Serialize/Deserialize for `MemFs` and public types    |
 
 ```toml
 [dependencies]

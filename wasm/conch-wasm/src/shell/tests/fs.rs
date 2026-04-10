@@ -807,3 +807,36 @@ fn find_in_subtree() {
         "should not find other.txt: {out}"
     );
 }
+
+#[test]
+fn cp_r_copies_directory() {
+    let mut s = shell();
+    s.run_line("mkdir -p src/sub");
+    s.run_line("echo hello > src/file.txt");
+    s.run_line("echo world > src/sub/deep.txt");
+    let (_, code, _) = s.run_line("cp -r src dst");
+    assert_eq!(code, 0);
+    let (out, _, _) = s.run_line("cat dst/file.txt");
+    assert_eq!(out, "hello");
+    let (out2, _, _) = s.run_line("cat dst/sub/deep.txt");
+    assert_eq!(out2, "world");
+}
+
+#[test]
+fn cp_r_on_file_works_like_regular_cp() {
+    let mut s = shell();
+    s.run_line("echo data > a.txt");
+    let (_, code, _) = s.run_line("cp -r a.txt b.txt");
+    assert_eq!(code, 0);
+    let (out, _, _) = s.run_line("cat b.txt");
+    assert_eq!(out, "data");
+}
+
+#[test]
+fn cp_without_r_rejects_directory() {
+    let mut s = shell();
+    s.run_line("mkdir d");
+    let (out, code, _) = s.run_line("cp d d2");
+    assert_ne!(code, 0);
+    assert!(out.contains("omitting directory"), "got: {out}");
+}

@@ -667,3 +667,15 @@ fn commit_on_readonly_handle_is_noop() -> Result<(), VfsError> {
     assert_eq!(fs.read_to_string("/f").unwrap(), "original");
     Ok(())
 }
+
+// -- set_groups / clear_groups -----------------------------------------------
+
+#[test]
+fn set_and_clear_groups() -> Result<(), VfsError> {
+    let mut fs = MemFs::new();
+    fs.set_groups(&[100, 200, 300]);
+    assert_eq!(fs.supplementary_gids(), &[100, 200, 300]);
+    fs.clear_groups();
+    assert!(fs.supplementary_gids().is_empty());
+    Ok(())
+}

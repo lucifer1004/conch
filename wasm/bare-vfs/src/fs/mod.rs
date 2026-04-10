@@ -479,10 +479,11 @@ impl MemFs {
     /// Insert an entry at the given path, preserving its exact timestamp values.
     ///
     /// Unlike [`insert`](Self::insert), this does NOT advance the internal clock and
-    /// stores the timestamps from the `Entry` as-is. Used during deserialization.
-    #[cfg(feature = "serde")]
-    #[allow(dead_code)]
-    pub(crate) fn insert_raw(&mut self, path: String, entry: Entry) {
+    /// stores the timestamps from the `Entry` as-is. Use this when you need to
+    /// preserve original timestamps (e.g. deserialization, mirroring). Use
+    /// [`insert`](Self::insert) when you want the filesystem clock to stamp the entry.
+    #[cfg_attr(not(feature = "serde"), allow(dead_code))]
+    pub fn insert_raw(&mut self, path: String, entry: Entry) {
         let ino = self.alloc_ino();
         let inode = match entry {
             Entry::File {
@@ -594,6 +595,183 @@ impl MemFs {
         let entry = inode.to_entry();
         self.dec_nlink(ino);
         Some(entry)
+    }
+
+    /// Remove a file. Returns an error if the path is a directory, not found, or permission denied.
+    pub fn remove_file(&mut self, path: &str) -> Result<(), VfsError> {
+        let (ino, inode) = self.traverse(path)?;
+        if !inode.is_file() {
+            return Err(VfsErrorKind::IsADirectory.into());
+        }
+        if !self.check_parent_write(path) {
+            return Err(VfsErrorKind::PermissionDenied.into());
+        }
+        let path_str = path.to_string();
+        if let Some((children, name)) = self.traverse_parent_mut(&path_str) {
+            children.remove(&name);
+        }
+        self.dec_nlink(ino);
+        Ok(())
+    }
+
+    /// Remove an empty directory. Returns an error if not empty, not a directory, not found, or permission denied.
+    pub fn remove_dir(&mut self, path: &str) -> Result<(), VfsError> {
+        if path == "/" {
+            return Err(VfsErrorKind::PermissionDenied.into());
+        }
+        let (ino, inode) = self.traverse(path)?;
+        if !inode.is_dir() {
+            return Err(VfsErrorKind::NotADirectory.into());
+        }
+        if let InodeKind::Dir { children } = &inode.kind {
+            if !children.is_empty() {
+                return Err(VfsErrorKind::DirectoryNotEmpty.into());
+            }
+        }
+        if !self.check_parent_write(path) {
+            return Err(VfsErrorKind::PermissionDenied.into());
+        }
+        let path_str = path.to_string();
+        if let Some((children, name)) = self.traverse_parent_mut(&path_str) {
+            children.remove(&name);
+        }
+        self.dec_nlink(ino);
+        Ok(())
+    }
+
+    /// Copy a file or directory tree recursively. Checks read permission on sources.
+    ///
+    /// Note: symlinks are followed (their targets are copied as regular files/dirs).
+    pub fn copy_recursive(&mut self, src: &str, dst: &str) -> Result<(), VfsError> {
+        let (_, src_inode) = self.traverse(src)?;
+        if src_inode.is_file() {
+            return self.copy(src, dst);
+        }
+        if !src_inode.is_dir() {
+            return Err(VfsErrorKind::NotFound.into());
+        }
+        // Collect all entries under src to avoid borrow conflicts
+        let entries: Vec<(String, bool, Vec<u8>, u16)> = self
+            .walk_prefix(src)
+            .map(|(path, entry)| {
+                let is_dir = entry.is_dir();
+                let content = entry.content().map(|c| c.to_vec()).unwrap_or_default();
+                let mode = entry.mode();
+                (path, is_dir, content, mode)
+            })
+            .collect();
+        let src_len = src.len();
+        for (path, is_dir, content, mode) in entries {
+            let relative = &path[src_len..];
+            let dst_path = if relative.is_empty() {
+                dst.to_string()
+            } else {
+                alloc::format!("{}{}", dst, relative)
+            };
+            if is_dir {
+                self.create_dir_all(&dst_path)?;
+            } else {
+                self.write_with_mode(&dst_path, content, mode)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Create a single directory with explicit permissions (masked by umask).
+    pub fn create_dir_with_mode(&mut self, path: &str, mode: u16) -> Result<(), VfsError> {
+        if self.exists(path) {
+            return Err(VfsErrorKind::AlreadyExists.into());
+        }
+        let parent = crate::parent(path).unwrap_or("/");
+        if !self.is_dir(parent) {
+            return Err(VfsErrorKind::NotFound.into());
+        }
+        if !self.check_parent_write(path) {
+            return Err(VfsErrorKind::PermissionDenied.into());
+        }
+        let now = self.tick();
+        let dir_mode = self.effective_mode(mode);
+        let ino = self.alloc_ino();
+        let uid = self.current_uid;
+        let gid = self.current_gid;
+        self.inodes.insert(
+            ino,
+            Inode {
+                kind: InodeKind::Dir {
+                    children: BTreeMap::new(),
+                },
+                mode: dir_mode,
+                uid,
+                gid,
+                mtime: now,
+                ctime: now,
+                atime: now,
+                nlink: 2,
+            },
+        );
+        let path_str = path.to_string();
+        if let Some((children, name)) = self.traverse_parent_mut(&path_str) {
+            children.insert(name, ino);
+            Ok(())
+        } else {
+            self.inodes.remove(&ino);
+            Err(VfsErrorKind::NotFound.into())
+        }
+    }
+
+    /// Create a directory and all missing ancestors with explicit permissions (masked by umask).
+    pub fn create_dir_all_with_mode(&mut self, path: &str, mode: u16) -> Result<(), VfsError> {
+        let now = self.tick();
+        let dir_mode = self.effective_mode(mode);
+        let uid = self.current_uid;
+        let gid = self.current_gid;
+        let normalized = crate::normalize(path);
+        let components = split_path(&normalized);
+
+        for i in 1..=components.len() {
+            let prefix = alloc::format!("/{}", components[..i].join("/"));
+            match self.traverse(&prefix) {
+                Ok((_, inode)) if inode.is_dir() => continue,
+                Ok(_) => return Err(VfsErrorKind::NotADirectory.into()),
+                Err(_) => {}
+            }
+            if !self.check_parent_write(&prefix) {
+                return Err(VfsErrorKind::PermissionDenied.into());
+            }
+            let new_ino = self.alloc_ino();
+            self.inodes.insert(
+                new_ino,
+                Inode {
+                    kind: InodeKind::Dir {
+                        children: BTreeMap::new(),
+                    },
+                    mode: dir_mode,
+                    uid,
+                    gid,
+                    mtime: now,
+                    ctime: now,
+                    atime: now,
+                    nlink: 2,
+                },
+            );
+            if let Some((children, name)) = self.traverse_parent_mut(&prefix) {
+                children.insert(name, new_ino);
+            } else {
+                self.inodes.remove(&new_ino);
+                return Err(VfsErrorKind::NotFound.into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Replace supplementary group IDs with a new list.
+    pub fn set_groups(&mut self, gids: &[u32]) {
+        self.supplementary_gids = gids.to_vec();
+    }
+
+    /// Remove all supplementary group IDs.
+    pub fn clear_groups(&mut self) {
+        self.supplementary_gids.clear();
     }
 
     /// Create a symbolic link at `link_path` pointing to `target`.

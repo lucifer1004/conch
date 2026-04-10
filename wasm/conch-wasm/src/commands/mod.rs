@@ -106,9 +106,12 @@ pub fn dispatch(shell: &mut Shell, cmd: &str, args: &[String], stdin: Option<&st
         "type" => plain(shell.cmd_type(args)),
         "env" | "printenv" => plain(shell.cmd_env()),
         "export" => plain(shell.cmd_export(args)),
+        "unset" => plain(shell.cmd_unset(args)),
+        "sleep" => plain(shell.cmd_sleep(args)),
 
         // Script execution
         "bash" | "sh" => plain(shell.cmd_bash(args)),
+        "source" | "." => shell.cmd_source(args),
 
         // User management
         "useradd" | "adduser" => plain(shell.cmd_useradd(args)),
@@ -139,8 +142,8 @@ pub const BUILTINS: &[&str] = &[
     "sed", "diff", "xxd", "base64", // File inspection
     "stat", "test", "[", "du", "tree", // Navigation & environment
     "cd", "pwd", "basename", "dirname", "realpath", "whoami", "hostname", "date", "which", "type",
-    "env", "printenv", "export", // Script execution
-    "bash", "sh", // User management
+    "env", "printenv", "export", "unset", "sleep", // Script execution
+    "bash", "sh", "source", ".", // User management
     "useradd", "adduser", "groupadd", "addgroup", "userdel", "deluser", "usermod", "su", "sudo",
     "passwd", // Shell builtins
     "clear", "true", "false",
