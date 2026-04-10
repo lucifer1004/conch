@@ -1,0 +1,389 @@
+use super::*;
+use crate::error::VfsErrorKind;
+use alloc::vec;
+
+// -- read / read_to_string / write --------------------------------------
+
+#[test]
+fn write_and_read_string() {
+    let mut fs = MemFs::new();
+    fs.write("/hello.txt", "world".to_string());
+    assert_eq!(fs.read_to_string("/hello.txt"), Ok("world"));
+    assert_eq!(fs.read("/hello.txt"), Ok(b"world".as_slice()));
+}
+
+#[test]
+fn write_and_read_bytes() {
+    let mut fs = MemFs::new();
+    fs.write("/bin", vec![0u8, 1, 0xFF]);
+    assert_eq!(fs.read("/bin"), Ok([0u8, 1, 0xFF].as_slice()));
+    assert_eq!(
+        fs.read_to_string("/bin"),
+        Err(VfsErrorKind::InvalidUtf8.into())
+    );
+}
+
+#[test]
+fn write_overwrites_existing() {
+    let mut fs = MemFs::new();
+    fs.write("/f.txt", "old".to_string());
+    fs.write("/f.txt", "new".to_string());
+    assert_eq!(fs.read_to_string("/f.txt"), Ok("new"));
+}
+
+#[test]
+fn write_with_mode_sets_permissions() {
+    let mut fs = MemFs::new();
+    fs.write_with_mode("/secret", "x".to_string(), 0o000);
+    fs.set_current_user(1000, 1000);
+    assert_eq!(
+        fs.read("/secret"),
+        Err(VfsErrorKind::PermissionDenied.into())
+    );
+}
+
+#[test]
+fn read_missing() {
+    let fs = MemFs::new();
+    assert_eq!(
+        fs.read_to_string("/nope"),
+        Err(VfsErrorKind::NotFound.into())
+    );
+}
+
+#[test]
+fn read_directory() {
+    let mut fs = MemFs::new();
+    fs.create_dir_all("/a");
+    assert_eq!(fs.read("/a"), Err(VfsErrorKind::IsADirectory.into()));
+}
+
+// -- append -------------------------------------------------------------
+
+#[test]
+fn append_to_file() {
+    let mut fs = MemFs::new();
+    fs.write("/log", "line1\n".to_string());
+    fs.append("/log", b"line2\n").unwrap();
+    assert_eq!(fs.read_to_string("/log"), Ok("line1\nline2\n"));
+}
+
+#[test]
+fn append_not_found() {
+    let mut fs = MemFs::new();
+    assert_eq!(fs.append("/nope", b"x"), Err(VfsErrorKind::NotFound.into()));
+}
+
+#[test]
+fn append_to_directory() {
+    let mut fs = MemFs::new();
+    fs.create_dir_all("/d");
+    assert_eq!(
+        fs.append("/d", b"x"),
+        Err(VfsErrorKind::IsADirectory.into())
+    );
+}
+
+#[test]
+fn append_permission_denied() {
+    let mut fs = MemFs::new();
+    fs.write_with_mode("/ro", "x", 0o444);
+    fs.set_current_user(1000, 1000);
+    assert_eq!(
+        fs.append("/ro", b"y"),
+        Err(VfsErrorKind::PermissionDenied.into())
+    );
+}
+
+// -- create_dir ---------------------------------------------------------
+
+#[test]
+fn create_dir_single() {
+    let mut fs = MemFs::new();
+    assert!(fs.create_dir("/sub").is_ok());
+    assert!(fs.is_dir("/sub"));
+}
+
+#[test]
+fn create_dir_already_exists() {
+    let mut fs = MemFs::new();
+    fs.create_dir_all("/sub");
+    assert_eq!(
+        fs.create_dir("/sub"),
+        Err(VfsErrorKind::AlreadyExists.into())
+    );
+}
+
+#[test]
+fn create_dir_parent_missing() {
+    let mut fs = MemFs::new();
+    assert_eq!(fs.create_dir("/a/b"), Err(VfsErrorKind::NotFound.into()));
+}
+
+#[test]
+fn create_dir_all_and_list() {
+    let mut fs = MemFs::new();
+    fs.create_dir_all("/a/b/c");
+    assert!(fs.is_dir("/a"));
+    assert!(fs.is_dir("/a/b"));
+    assert!(fs.is_dir("/a/b/c"));
+
+    let children = fs.read_dir("/a").unwrap();
+    assert_eq!(children.len(), 1);
+    assert_eq!(children[0].name, "b");
+    assert!(children[0].is_dir);
+}
+
+#[test]
+fn create_dir_all_idempotent() {
+    let mut fs = MemFs::new();
+    fs.create_dir_all("/a/b/c");
+    fs.create_dir_all("/a/b/c");
+    assert!(fs.is_dir("/a/b/c"));
+}
+
+// -- touch --------------------------------------------------------------
+
+#[test]
+fn touch_creates_empty_file() {
+    let mut fs = MemFs::new();
+    fs.touch("/new.txt");
+    assert_eq!(fs.read("/new.txt"), Ok(b"".as_slice()));
+}
+
+#[test]
+fn touch_does_not_overwrite() {
+    let mut fs = MemFs::new();
+    fs.write("/f.txt", "data".to_string());
+    fs.touch("/f.txt");
+    assert_eq!(fs.read_to_string("/f.txt"), Ok("data"));
+}
+
+// -- remove / remove_dir_all --------------------------------------------
+
+#[test]
+fn remove_file() {
+    let mut fs = MemFs::new();
+    fs.write("/f.txt", "x".to_string());
+    assert!(fs.remove("/f.txt").is_some());
+    assert!(!fs.exists("/f.txt"));
+}
+
+#[test]
+fn remove_nonexistent() {
+    let mut fs = MemFs::new();
+    assert!(fs.remove("/nope").is_none());
+}
+
+#[test]
+fn remove_dir_all_recursive() {
+    let mut fs = MemFs::new();
+    fs.create_dir_all("/a/b");
+    fs.write("/a/b/f.txt", "x".to_string());
+    fs.write("/a/g.txt", "y".to_string());
+    assert!(fs.remove_dir_all("/a").is_ok());
+    assert!(!fs.exists("/a"));
+    assert!(!fs.exists("/a/b"));
+    assert!(!fs.exists("/a/b/f.txt"));
+}
+
+#[test]
+fn remove_dir_all_preserves_siblings() {
+    let mut fs = MemFs::new();
+    fs.create_dir_all("/a/target");
+    fs.write("/a/target/f.txt", "x".to_string());
+    fs.write("/a/sibling.txt", "keep".to_string());
+    fs.remove_dir_all("/a/target").unwrap();
+    assert!(!fs.exists("/a/target"));
+    assert_eq!(fs.read_to_string("/a/sibling.txt"), Ok("keep"));
+}
+
+#[test]
+fn remove_dir_all_not_found() {
+    let mut fs = MemFs::new();
+    assert_eq!(
+        fs.remove_dir_all("/nope"),
+        Err(VfsErrorKind::NotFound.into())
+    );
+}
+
+#[test]
+fn remove_dir_all_on_file() {
+    let mut fs = MemFs::new();
+    fs.write("/f.txt", "x".to_string());
+    assert_eq!(
+        fs.remove_dir_all("/f.txt"),
+        Err(VfsErrorKind::NotADirectory.into())
+    );
+}
+
+// -- set_mode -----------------------------------------------------------
+
+#[test]
+fn set_mode_file() {
+    let mut fs = MemFs::new();
+    fs.write("/f.txt", "x".to_string());
+    fs.set_mode("/f.txt", 0o000).unwrap();
+    fs.set_current_user(1000, 1000);
+    assert_eq!(
+        fs.read("/f.txt"),
+        Err(VfsErrorKind::PermissionDenied.into())
+    );
+    // Switch back to root to re-enable read
+    fs.set_current_user(0, 0);
+    fs.set_mode("/f.txt", 0o644).unwrap();
+    assert_eq!(fs.read_to_string("/f.txt"), Ok("x"));
+}
+
+#[test]
+fn set_mode_dir() {
+    let mut fs = MemFs::new();
+    fs.create_dir_all("/d");
+    fs.set_mode("/d", 0o500).unwrap();
+    assert_eq!(fs.get("/d").unwrap().mode(), 0o500);
+}
+
+#[test]
+fn set_mode_not_found() {
+    let mut fs = MemFs::new();
+    assert_eq!(
+        fs.set_mode("/nope", 0o644),
+        Err(VfsErrorKind::NotFound.into())
+    );
+}
+
+// -- copy ---------------------------------------------------------------
+
+#[test]
+fn copy_file() {
+    let mut fs = MemFs::new();
+    fs.write("/a.txt", "hello".to_string());
+    fs.copy("/a.txt", "/b.txt").unwrap();
+    assert_eq!(fs.read_to_string("/b.txt"), Ok("hello"));
+    assert_eq!(fs.read_to_string("/a.txt"), Ok("hello"));
+}
+
+#[test]
+fn copy_not_found() {
+    let mut fs = MemFs::new();
+    assert_eq!(fs.copy("/nope", "/dst"), Err(VfsErrorKind::NotFound.into()));
+}
+
+#[test]
+fn copy_directory() {
+    let mut fs = MemFs::new();
+    fs.create_dir_all("/d");
+    assert_eq!(fs.copy("/d", "/d2"), Err(VfsErrorKind::IsADirectory.into()));
+}
+
+#[test]
+fn copy_permission_denied() {
+    let mut fs = MemFs::new();
+    fs.write_with_mode("/secret", "x", 0o000);
+    fs.set_current_user(1000, 1000);
+    assert_eq!(
+        fs.copy("/secret", "/dst"),
+        Err(VfsErrorKind::PermissionDenied.into())
+    );
+}
+
+#[test]
+fn copy_overwrites_destination() {
+    let mut fs = MemFs::new();
+    fs.write("/src", "new".to_string());
+    fs.write("/dst", "old".to_string());
+    fs.copy("/src", "/dst").unwrap();
+    assert_eq!(fs.read_to_string("/dst"), Ok("new"));
+}
+
+// -- rename -------------------------------------------------------------
+
+#[test]
+fn rename_file() {
+    let mut fs = MemFs::new();
+    fs.write("/old.txt", "data".to_string());
+    fs.rename("/old.txt", "/new.txt").unwrap();
+    assert!(!fs.exists("/old.txt"));
+    assert_eq!(fs.read_to_string("/new.txt"), Ok("data"));
+}
+
+#[test]
+fn rename_not_found() {
+    let mut fs = MemFs::new();
+    assert_eq!(
+        fs.rename("/nope", "/dst"),
+        Err(VfsErrorKind::NotFound.into())
+    );
+}
+
+// -- insert (low-level) -------------------------------------------------
+
+#[test]
+fn insert_raw_entry() {
+    let mut fs = MemFs::new();
+    fs.insert("/custom".into(), Entry::file_with_mode("data", 0o755));
+    let e = fs.get("/custom").unwrap();
+    assert_eq!(e.content_str(), Some("data"));
+    assert!(e.is_executable());
+}
+
+// -- Truncate tests -----------------------------------------------------
+
+#[test]
+fn truncate_shorter() {
+    let mut fs = MemFs::new();
+    fs.write("/a", "hello world");
+    fs.truncate("/a", 5).unwrap();
+    assert_eq!(fs.read_to_string("/a").unwrap(), "hello");
+}
+
+#[test]
+fn truncate_longer_zero_fills() {
+    let mut fs = MemFs::new();
+    fs.write("/a", "hi");
+    fs.truncate("/a", 5).unwrap();
+    let bytes = fs.read("/a").unwrap();
+    assert_eq!(bytes, &[b'h', b'i', 0, 0, 0]);
+}
+
+#[test]
+fn truncate_to_zero() {
+    let mut fs = MemFs::new();
+    fs.write("/a", "data");
+    fs.truncate("/a", 0).unwrap();
+    assert_eq!(fs.read("/a").unwrap(), &[] as &[u8]);
+}
+
+#[test]
+fn truncate_missing() {
+    let mut fs = MemFs::new();
+    assert!(matches!(fs.truncate("/x", 0), Err(ref e) if *e.kind() == VfsErrorKind::NotFound));
+}
+
+#[test]
+fn truncate_directory() {
+    let mut fs = MemFs::new();
+    fs.create_dir("/d").unwrap();
+    assert!(matches!(fs.truncate("/d", 0), Err(ref e) if *e.kind() == VfsErrorKind::IsADirectory));
+}
+
+#[test]
+fn truncate_permission_denied() {
+    let mut fs = MemFs::new();
+    fs.write_with_mode("/a", "data", 0o444);
+    fs.set_current_user(1000, 1000);
+    assert!(
+        matches!(fs.truncate("/a", 0), Err(ref e) if *e.kind() == VfsErrorKind::PermissionDenied)
+    );
+}
+
+#[test]
+fn truncate_updates_timestamps() {
+    let mut fs = MemFs::new();
+    fs.write("/a", "hello");
+    let t1 = fs.metadata("/a").unwrap().mtime();
+    fs.truncate("/a", 3).unwrap();
+    let m = fs.metadata("/a").unwrap();
+    assert!(m.mtime() > t1);
+    assert!(m.ctime() > t1);
+}
