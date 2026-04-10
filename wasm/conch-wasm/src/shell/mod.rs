@@ -123,9 +123,6 @@ impl Shell {
         // Chown the home directory to the main user
         fs.chown(&home, main_uid, main_gid).unwrap_or(());
 
-        // Switch to the main user so that user-provided files are owned by them
-        fs.set_current_user(main_uid, main_gid);
-
         // Resolve files to populate
         let empty_files: BTreeMap<String, FileSpec> = BTreeMap::new();
         let files = if let Some(ref sys) = config.system {
@@ -134,7 +131,9 @@ impl Shell {
             config.files.as_ref().unwrap_or(&empty_files)
         };
 
-        // Populate user-provided files as the main user so they have correct ownership
+        // Seed files as root (uid=0) so all configured paths can be created
+        // regardless of directory ownership. The fs starts as uid=0.
+        // Chown each seeded file to the main user so they can write to them.
         for (file_path, spec) in files {
             let full = if file_path.starts_with('/') {
                 file_path.clone()
@@ -158,7 +157,12 @@ impl Shell {
                     let _ = fs.write_with_mode(&full, content.as_bytes(), octal);
                 }
             };
+            // Chown to main user so they own the seeded file
+            fs.chown(&full, main_uid, main_gid).unwrap_or(());
         }
+
+        // Switch to the main user after all files are seeded
+        fs.set_current_user(main_uid, main_gid);
 
         let mut env = BTreeMap::new();
         env.insert("HOME".to_string(), home.clone());
@@ -275,8 +279,8 @@ impl Shell {
     }
 
     /// Create directory and all parents
-    pub fn mkdir_p(&mut self, abs_path: &str) {
-        let _ = self.fs.create_dir_all(abs_path);
+    pub fn mkdir_p(&mut self, abs_path: &str) -> Result<(), bare_vfs::VfsError> {
+        self.fs.create_dir_all(abs_path)
     }
 
     /// Build an output entry
@@ -425,17 +429,39 @@ impl Shell {
             }
             match redir.typ {
                 crate::parser::RedirectType::Overwrite => {
-                    let _ = self.fs.write(&target, output.as_bytes());
+                    if self.fs.write(&target, output.as_bytes()).is_err() {
+                        return (
+                            format!("conch: {}: Permission denied", redir.target),
+                            1,
+                            None,
+                        );
+                    }
                 }
                 crate::parser::RedirectType::Append => {
                     if !self.fs.exists(&target) {
-                        let _ = self.fs.write(&target, output.as_bytes());
+                        if self.fs.write(&target, output.as_bytes()).is_err() {
+                            return (
+                                format!("conch: {}: Permission denied", redir.target),
+                                1,
+                                None,
+                            );
+                        }
                     } else {
                         let needs_newline = self.fs.read(&target).is_ok_and(|b| !b.is_empty());
-                        if needs_newline {
-                            let _ = self.fs.append(&target, b"\n");
+                        if needs_newline && self.fs.append(&target, b"\n").is_err() {
+                            return (
+                                format!("conch: {}: Permission denied", redir.target),
+                                1,
+                                None,
+                            );
                         }
-                        let _ = self.fs.append(&target, output.as_bytes());
+                        if self.fs.append(&target, output.as_bytes()).is_err() {
+                            return (
+                                format!("conch: {}: Permission denied", redir.target),
+                                1,
+                                None,
+                            );
+                        }
                     }
                 }
             }

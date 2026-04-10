@@ -164,7 +164,9 @@ impl Shell {
         for d in &dirs {
             let path = self.resolve(d);
             if parents {
-                self.mkdir_p(&path);
+                if let Err(e) = self.mkdir_p(&path) {
+                    return (format!("mkdir: cannot create directory '{}': {}", d, e), 1);
+                }
             } else {
                 match self.fs.create_dir(&path) {
                     Ok(()) => {}
@@ -229,7 +231,12 @@ impl Shell {
                     }
                 }
             } else if self.fs.is_file(&path) {
-                self.fs.remove(&path);
+                if self.fs.remove(&path).is_none() && !force {
+                    return (
+                        format!("rm: cannot remove '{}': No such file or directory", t),
+                        1,
+                    );
+                }
             } else if !force {
                 return (
                     format!("rm: cannot remove '{}': No such file or directory", t),
@@ -426,8 +433,8 @@ impl Shell {
                     if let Err(e) = self.fs.write(&path, input.as_bytes()) {
                         return (format!("tee: {}: {}", f, e), 1);
                     }
-                } else {
-                    let _ = self.fs.append(&path, input.as_bytes());
+                } else if let Err(e) = self.fs.append(&path, input.as_bytes()) {
+                    return (format!("tee: {}: {}", f, e), 1);
                 }
             } else {
                 if let Err(e) = self.fs.write(&path, input.as_bytes()) {
@@ -539,7 +546,15 @@ impl Shell {
                     1,
                 );
             }
-            self.fs.remove(&path);
+            if self.fs.remove(&path).is_none() {
+                return (
+                    format!(
+                        "rmdir: failed to remove '{}': No such file or directory",
+                        arg
+                    ),
+                    1,
+                );
+            }
         }
         (String::new(), 0)
     }
@@ -553,16 +568,22 @@ impl Shell {
         }
 
         // Ensure /tmp exists
-        let _ = self.fs.create_dir_all("/tmp");
+        if self.fs.create_dir_all("/tmp").is_err() {
+            return ("mktemp: failed to create /tmp".into(), 1);
+        }
 
         // Generate a unique name using a simple counter approach
         let name = self.generate_tmpname();
         let path = format!("/tmp/{}", name);
 
         if make_dir {
-            let _ = self.fs.create_dir_all(&path);
+            if let Err(e) = self.fs.create_dir(&path) {
+                return (format!("mktemp: failed to create directory: {}", e), 1);
+            }
         } else {
-            let _ = self.fs.write(&path, b"" as &[u8]);
+            if let Err(e) = self.fs.write(&path, b"" as &[u8]) {
+                return (format!("mktemp: failed to create file: {}", e), 1);
+            }
         }
 
         (path, 0)
@@ -673,7 +694,10 @@ impl Shell {
         }
 
         let spec = &positional[0];
-        let (uid, gid) = self.parse_owner_spec_userdb(spec);
+        let (uid, gid) = match self.parse_owner_spec_userdb(spec) {
+            Ok(v) => v,
+            Err(msg) => return (format!("chown: {}", msg), 1),
+        };
 
         let targets: Vec<String> = positional[1..].iter().map(|s| self.resolve(s)).collect();
         let orig_args: Vec<String> = positional[1..].to_vec();
@@ -749,10 +773,10 @@ impl Shell {
         }
 
         let group_str = &positional[0];
-        let gid = self
-            .users
-            .resolve_gid(group_str)
-            .unwrap_or(self.fs.current_gid());
+        let gid = match self.users.resolve_gid(group_str) {
+            Some(gid) => gid,
+            None => return (format!("chgrp: invalid group: '{}'", group_str), 1),
+        };
 
         let targets: Vec<String> = positional[1..].iter().map(|s| self.resolve(s)).collect();
         let orig_args: Vec<String> = positional[1..].to_vec();
@@ -842,24 +866,29 @@ impl Shell {
     }
 
     /// Parse `user:group`, `user:`, `:group`, or `user` into (uid, gid) using UserDb.
-    fn parse_owner_spec_userdb(&self, spec: &str) -> (u32, u32) {
-        let default_uid = self.fs.current_uid();
-        let default_gid = self.fs.current_gid();
+    fn parse_owner_spec_userdb(&self, spec: &str) -> Result<(u32, u32), String> {
         if let Some((user_part, group_part)) = spec.split_once(':') {
             let uid = if user_part.is_empty() {
-                default_uid
+                self.fs.current_uid()
             } else {
-                self.users.resolve_uid(user_part).unwrap_or(default_uid)
+                self.users
+                    .resolve_uid(user_part)
+                    .ok_or_else(|| format!("invalid user: '{}'", user_part))?
             };
             let gid = if group_part.is_empty() {
-                default_gid
+                self.fs.current_gid()
             } else {
-                self.users.resolve_gid(group_part).unwrap_or(default_gid)
+                self.users
+                    .resolve_gid(group_part)
+                    .ok_or_else(|| format!("invalid group: '{}'", group_part))?
             };
-            (uid, gid)
+            Ok((uid, gid))
         } else {
-            let uid = self.users.resolve_uid(spec).unwrap_or(default_uid);
-            (uid, default_gid)
+            let uid = self
+                .users
+                .resolve_uid(spec)
+                .ok_or_else(|| format!("invalid user: '{}'", spec))?;
+            Ok((uid, self.fs.current_gid()))
         }
     }
 }
