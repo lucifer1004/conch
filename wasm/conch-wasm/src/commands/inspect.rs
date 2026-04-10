@@ -66,6 +66,12 @@ impl Shell {
     }
 
     fn evaluate_test(&self, args: &[&String]) -> bool {
+        // Handle `!` negation operator
+        if let Some(first) = args.first() {
+            if first.as_str() == "!" {
+                return !self.evaluate_test(&args[1..]);
+            }
+        }
         match args {
             [] => false,
             [flag, path] if flag.as_str() == "-e" => {

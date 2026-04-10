@@ -258,3 +258,18 @@ fn tree_empty_directory() {
     assert_eq!(code, 0);
     assert!(out.contains("empty"), "got {:?}", out);
 }
+
+// --- M6: test/[ no `!` operator ---
+#[test]
+fn test_negation() {
+    let mut s = shell();
+    let (_, code, _) = s.run_line("test ! -f nonexistent");
+    assert_eq!(code, 0); // ! negates: -f fails, ! makes it succeed
+}
+
+#[test]
+fn test_negation_inverts_true() {
+    let mut s = shell_with_files(serde_json::json!({"f.txt": "x"}));
+    let (_, code, _) = s.run_line("test ! -f f.txt");
+    assert_ne!(code, 0); // file exists, so -f is true, ! makes it false
+}

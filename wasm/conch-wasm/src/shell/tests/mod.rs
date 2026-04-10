@@ -20,7 +20,16 @@ pub fn shell_with_files(files: serde_json::Value) -> Shell {
         },
         "commands": [],
     });
-    let c: Config = serde_json::from_value(v).unwrap();
+    let c: Config = match serde_json::from_value(v) {
+        Ok(c) => c,
+        Err(e) => {
+            assert!(
+                e.to_string().is_empty(),
+                "shell_with_files: config parse failed: {e}"
+            );
+            return shell();
+        }
+    };
     Shell::new(&c)
 }
 

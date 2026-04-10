@@ -25,67 +25,82 @@ impl Shell {
             paths.push(".".to_string());
         }
 
-        let target = self.resolve(&paths[0]);
+        let multi = paths.len() > 1;
+        let mut sections = Vec::new();
 
-        match self.fs.get(&target) {
-            Some(e) if e.is_file() => {
-                return (target.rsplit('/').next().unwrap_or(&target).to_string(), 0);
-            }
-            None => {
-                return (
-                    format!(
-                        "ls: cannot access '{}': No such file or directory",
-                        paths[0]
-                    ),
-                    2,
-                );
-            }
-            _ => {}
-        }
+        for path_arg in &paths {
+            let target = self.resolve(path_arg);
 
-        let children = self.list_dir(&target);
-        let formatted: Vec<String> = children
-            .iter()
-            .filter(|(name, _, _)| show_all || !name.starts_with('.'))
-            .map(|(name, is_dir, mode)| {
-                if long {
-                    let ms = FsEntry::format_mode(*mode);
-                    let entry_path = format!("{}/{}", target, name);
-                    let is_symlink = self.fs.is_symlink(&entry_path);
-                    let ty = if *is_dir {
-                        "d"
-                    } else if is_symlink {
-                        "l"
-                    } else {
-                        "-"
-                    };
-                    let display = if *is_dir {
+            match self.fs.get(&target) {
+                Some(e) if e.is_file() => {
+                    sections.push(target.rsplit('/').next().unwrap_or(&target).to_string());
+                    continue;
+                }
+                None => {
+                    return (
+                        format!(
+                            "ls: cannot access '{}': No such file or directory",
+                            path_arg
+                        ),
+                        2,
+                    );
+                }
+                _ => {}
+            }
+
+            let children = self.list_dir(&target);
+            let formatted: Vec<String> = children
+                .iter()
+                .filter(|(name, _, _)| show_all || !name.starts_with('.'))
+                .map(|(name, is_dir, mode)| {
+                    if long {
+                        let ms = FsEntry::format_mode(*mode);
+                        let entry_path = format!("{}/{}", target, name);
+                        let is_symlink = self.fs.is_symlink(&entry_path);
+                        let ty = if is_symlink {
+                            "l"
+                        } else if *is_dir {
+                            "d"
+                        } else {
+                            "-"
+                        };
+                        let display = if *is_dir {
+                            format!("{}{}/{}", ansi::BOLD_BLUE, name, ansi::RESET)
+                        } else {
+                            name.clone()
+                        };
+                        let (owner, group, nlink, size) =
+                            if let Ok(meta) = self.fs.metadata(&entry_path) {
+                                let owner = self.users.uid_to_name(meta.uid());
+                                let group_name = self.users.gid_to_name(meta.gid());
+                                (owner, group_name, meta.nlink(), meta.len())
+                            } else {
+                                (self.user.clone(), self.user.clone(), 1, 0)
+                            };
+                        format!(
+                            "{}{} {:>2} {} {} {:>5} {}",
+                            ty, ms, nlink, owner, group, size, display
+                        )
+                    } else if *is_dir {
                         format!("{}{}/{}", ansi::BOLD_BLUE, name, ansi::RESET)
                     } else {
                         name.clone()
-                    };
-                    let (owner, group, nlink, size) =
-                        if let Ok(meta) = self.fs.metadata(&entry_path) {
-                            let owner = self.users.uid_to_name(meta.uid());
-                            let group_name = self.users.gid_to_name(meta.gid());
-                            (owner, group_name, meta.nlink(), meta.len())
-                        } else {
-                            (self.user.clone(), self.user.clone(), 1, 0)
-                        };
-                    format!(
-                        "{}{} {:>2} {} {} {:>5} {}",
-                        ty, ms, nlink, owner, group, size, display
-                    )
-                } else if *is_dir {
-                    format!("{}{}/{}", ansi::BOLD_BLUE, name, ansi::RESET)
-                } else {
-                    name.clone()
-                }
-            })
-            .collect();
+                    }
+                })
+                .collect();
 
-        let sep = if long { "\n" } else { "  " };
-        (formatted.join(sep), 0)
+            let sep = if long { "\n" } else { "  " };
+            let mut section = String::new();
+            if multi {
+                section.push_str(path_arg);
+                section.push(':');
+                section.push('\n');
+            }
+            section.push_str(&formatted.join(sep));
+            sections.push(section);
+        }
+
+        (sections.join("\n\n"), 0)
     }
 
     pub fn cmd_cat(&self, args: &[String], stdin: Option<&str>) -> CmdResult {
@@ -111,7 +126,7 @@ impl Shell {
                     Err(e) => return (format!("cat: {}: {}", arg, e), 1, None),
                 }
             }
-            parts.join("\n")
+            parts.join("")
         };
 
         let lang = if file_args.len() == 1 && stdin.is_none() && !line_numbers {
@@ -208,7 +223,11 @@ impl Shell {
                 if !recursive {
                     return (format!("rm: cannot remove '{}': Is a directory", t), 1);
                 }
-                let _ = self.fs.remove_dir_all(&path);
+                if let Err(e) = self.fs.remove_dir_all(&path) {
+                    if !force || *e.kind() != bare_vfs::VfsErrorKind::NotFound {
+                        return (format!("rm: cannot remove '{}': {}", t, e), 1);
+                    }
+                }
             } else if self.fs.is_file(&path) {
                 self.fs.remove(&path);
             } else if !force {
@@ -225,6 +244,39 @@ impl Shell {
         let files: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
         if files.len() < 2 {
             return ("cp: missing operand".into(), 1);
+        }
+
+        // When more than 2 args, last arg must be a directory
+        if files.len() > 2 {
+            let dst_path = self.resolve(files[files.len() - 1]);
+            if !self.fs.is_dir(&dst_path) {
+                return (
+                    format!("cp: target '{}' is not a directory", files[files.len() - 1]),
+                    1,
+                );
+            }
+            for src in &files[..files.len() - 1] {
+                let src_path = self.resolve(src);
+                let content = match self.fs.read_to_string(&src_path) {
+                    Ok(s) => s.to_string(),
+                    Err(ref e) if *e.kind() == bare_vfs::VfsErrorKind::IsADirectory => {
+                        return ("cp: omitting directory".into(), 1)
+                    }
+                    Err(ref e) if *e.kind() == bare_vfs::VfsErrorKind::NotFound => {
+                        return (
+                            format!("cp: cannot stat '{}': No such file or directory", src),
+                            1,
+                        )
+                    }
+                    Err(_) => return (format!("cp: '{}': Permission denied", src), 1),
+                };
+                let name = src_path.rsplit('/').next().unwrap_or(src);
+                let target = format!("{}/{}", dst_path, name);
+                if let Err(e) = self.fs.write(&target, content.as_bytes()) {
+                    return (format!("cp: cannot create '{}': {}", src, e), 1);
+                }
+            }
+            return (String::new(), 0);
         }
 
         let src_path = self.resolve(files[0]);
@@ -375,10 +427,6 @@ impl Shell {
                         return (format!("tee: {}: {}", f, e), 1);
                     }
                 } else {
-                    let needs_newline = self.fs.read(&path).is_ok_and(|b| !b.is_empty());
-                    if needs_newline {
-                        let _ = self.fs.append(&path, b"\n");
-                    }
                     let _ = self.fs.append(&path, input.as_bytes());
                 }
             } else {
@@ -396,13 +444,48 @@ impl Shell {
             return ("chmod: missing operand".into(), 1);
         }
         let mode_str = &args[0];
-        let mode: u16 = match u16::from_str_radix(mode_str, 8) {
-            Ok(m) => m,
-            Err(_) => return (format!("chmod: invalid mode: '{}'", mode_str), 1),
-        };
+
+        // Try octal first, then symbolic
+        let is_symbolic = mode_str
+            .chars()
+            .next()
+            .map(|c| !c.is_ascii_digit())
+            .unwrap_or(false);
 
         for arg in &args[1..] {
             let path = self.resolve(arg);
+
+            let mode = if is_symbolic {
+                // Parse symbolic mode, get current mode first
+                let current = match self.fs.metadata(&path) {
+                    Ok(m) => m.mode(),
+                    Err(e) if *e.kind() == bare_vfs::VfsErrorKind::NotFound => {
+                        return (
+                            format!("chmod: cannot access '{}': No such file or directory", arg),
+                            1,
+                        );
+                    }
+                    Err(_) => {
+                        return (
+                            format!(
+                                "chmod: changing permissions of '{}': Operation not permitted",
+                                arg
+                            ),
+                            1,
+                        );
+                    }
+                };
+                match apply_symbolic_mode(mode_str, current) {
+                    Some(m) => m,
+                    None => return (format!("chmod: invalid mode: '{}'", mode_str), 1),
+                }
+            } else {
+                match u16::from_str_radix(mode_str, 8) {
+                    Ok(m) => m,
+                    Err(_) => return (format!("chmod: invalid mode: '{}'", mode_str), 1),
+                }
+            };
+
             match self.fs.set_mode(&path, mode) {
                 Err(e) if *e.kind() == bare_vfs::VfsErrorKind::NotFound => {
                     return (
@@ -485,13 +568,10 @@ impl Shell {
         (path, 0)
     }
 
-    fn generate_tmpname(&self) -> String {
-        // Count existing /tmp entries to create unique suffix
-        let count = self
-            .fs
-            .read_dir("/tmp")
-            .map(|entries| entries.len())
-            .unwrap_or(0);
+    fn generate_tmpname(&mut self) -> String {
+        // Use a monotonic counter to guarantee uniqueness even after deletions
+        let count = self.tmp_counter;
+        self.tmp_counter += 1;
         format!("tmp.{:010}", count)
     }
 
@@ -540,10 +620,35 @@ impl Shell {
         if args.is_empty() {
             return ("readlink: missing operand".into(), 1);
         }
-        let path = self.resolve(&args[0]);
-        match self.fs.read_link(&path) {
-            Ok(target) => (target, 0),
-            Err(_) => (format!("readlink: {}: Invalid argument", args[0]), 1),
+        let mut canonicalize = false;
+        let mut target_arg = None;
+        for arg in args {
+            match arg.as_str() {
+                "-f" => canonicalize = true,
+                s if !s.starts_with('-') && target_arg.is_none() => {
+                    target_arg = Some(arg.as_str());
+                }
+                _ => {}
+            }
+        }
+        let target_str = match target_arg {
+            Some(t) => t,
+            None => return ("readlink: missing operand".into(), 1),
+        };
+        let path = self.resolve(target_str);
+        if canonicalize {
+            match self.fs.canonical_path(&path) {
+                Ok(canonical) => (canonical, 0),
+                Err(_) => (
+                    format!("readlink: {}: No such file or directory", target_str),
+                    1,
+                ),
+            }
+        } else {
+            match self.fs.read_link(&path) {
+                Ok(target) => (target, 0),
+                Err(_) => (format!("readlink: {}: Invalid argument", target_str), 1),
+            }
         }
     }
 
@@ -757,6 +862,127 @@ impl Shell {
             (uid, default_gid)
         }
     }
+}
+
+/// Apply a symbolic chmod mode string (e.g., "+x", "u+rw", "a-w", "go+rx") to a current mode.
+/// Returns None if the mode string cannot be parsed.
+fn apply_symbolic_mode(spec: &str, current: u16) -> Option<u16> {
+    let mut mode = current;
+    // Support comma-separated clauses like "u+x,g+r"
+    for clause in spec.split(',') {
+        let clause = clause.trim();
+        if clause.is_empty() {
+            continue;
+        }
+        // Parse who: u, g, o, a (or empty = a)
+        let mut chars = clause.chars().peekable();
+        let mut who_u = false;
+        let mut who_g = false;
+        let mut who_o = false;
+        loop {
+            match chars.peek() {
+                Some('u') => {
+                    who_u = true;
+                    chars.next();
+                }
+                Some('g') => {
+                    who_g = true;
+                    chars.next();
+                }
+                Some('o') => {
+                    who_o = true;
+                    chars.next();
+                }
+                Some('a') => {
+                    who_u = true;
+                    who_g = true;
+                    who_o = true;
+                    chars.next();
+                }
+                _ => break,
+            }
+        }
+        // If no who specified, default to all
+        if !who_u && !who_g && !who_o {
+            who_u = true;
+            who_g = true;
+            who_o = true;
+        }
+        // Parse operator: +, -, =
+        let op = chars.next()?;
+        if op != '+' && op != '-' && op != '=' {
+            return None;
+        }
+        // Parse permissions: r, w, x
+        let mut perm_r = false;
+        let mut perm_w = false;
+        let mut perm_x = false;
+        for c in chars {
+            match c {
+                'r' => perm_r = true,
+                'w' => perm_w = true,
+                'x' => perm_x = true,
+                _ => return None,
+            }
+        }
+        // Build masks
+        let mut set_mask: u16 = 0;
+        if who_u {
+            if perm_r {
+                set_mask |= 0o400;
+            }
+            if perm_w {
+                set_mask |= 0o200;
+            }
+            if perm_x {
+                set_mask |= 0o100;
+            }
+        }
+        if who_g {
+            if perm_r {
+                set_mask |= 0o040;
+            }
+            if perm_w {
+                set_mask |= 0o020;
+            }
+            if perm_x {
+                set_mask |= 0o010;
+            }
+        }
+        if who_o {
+            if perm_r {
+                set_mask |= 0o004;
+            }
+            if perm_w {
+                set_mask |= 0o002;
+            }
+            if perm_x {
+                set_mask |= 0o001;
+            }
+        }
+        match op {
+            '+' => mode |= set_mask,
+            '-' => {
+                mode &= !set_mask;
+            }
+            '=' => {
+                // Clear all bits for the selected who, then set
+                let mut who_mask: u16 = 0;
+                if who_u {
+                    who_mask |= 0o700;
+                }
+                if who_g {
+                    who_mask |= 0o070;
+                }
+                if who_o {
+                    who_mask |= 0o007;
+                }
+                mode = (mode & !who_mask) | set_mask;
+            }
+            _ => return None,
+        }
+    }
+    Some(mode)
 }
 
 fn detect_lang(filename: &str) -> Option<String> {

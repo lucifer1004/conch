@@ -425,3 +425,80 @@ fn tr_from_stdin_uppercase() {
     // tr might not support ranges, but at least should not panic
     assert!(code == 0);
 }
+
+// --- H2: echo -n suppresses trailing newline ---
+#[test]
+fn echo_n_suppresses_trailing_newline() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("echo -n hello");
+    assert_eq!(code, 0);
+    assert_eq!(out, "hello"); // no trailing newline
+                              // Contrast with regular echo:
+    let (out2, _, _) = s.run_line("echo hello");
+    assert_eq!(out2, "hello");
+}
+
+// --- M3: sed literal matching works ---
+#[test]
+fn sed_is_literal_not_regex() {
+    // Document: sed uses literal matching, not regex
+    let mut s = shell_with_files(serde_json::json!({"f.txt": "hello123world"}));
+    let (out, _, _) = s.run_line("sed 's/123//' f.txt");
+    assert_eq!(out, "helloworld"); // literal works
+}
+
+// --- M7: wc -l counts newlines not .lines() ---
+#[test]
+fn wc_l_counts_newlines() {
+    let mut s = shell_with_files(serde_json::json!({"f.txt": "no trailing newline"}));
+    let (out, _, _) = s.run_line("wc -l f.txt");
+    // "no trailing newline" has 0 newlines, so wc -l should say 0
+    assert!(
+        out.contains("0"),
+        "expected 0 lines for no-newline file: {out}"
+    );
+}
+
+// --- L4: type exits 1 for unknown ---
+#[test]
+fn type_unknown_exits_1() {
+    let mut s = shell();
+    let (_, code, _) = s.run_line("type nonexistent_cmd");
+    assert_ne!(code, 0);
+}
+
+// --- L5: which stops on first unknown ---
+#[test]
+fn which_reports_all_args() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("which echo nonexistent_cmd cat");
+    assert_ne!(code, 0);
+    // Even though echo and cat are builtins, nonexistent_cmd should cause failure
+    assert!(out.contains("no nonexistent_cmd"), "got: {out}");
+}
+
+// --- L7: seq 3-arg form ---
+#[test]
+fn seq_with_increment() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("seq 1 2 7");
+    assert_eq!(code, 0);
+    assert_eq!(out, "1\n3\n5\n7");
+}
+
+// --- L8: head/tail -N syntax ---
+#[test]
+fn head_dash_n_shorthand() {
+    let mut s = shell_with_files(serde_json::json!({"f.txt": "a\nb\nc\nd\ne"}));
+    let (out, code, _) = s.run_line("head -3 f.txt");
+    assert_eq!(code, 0);
+    assert_eq!(out, "a\nb\nc");
+}
+
+#[test]
+fn tail_dash_n_shorthand() {
+    let mut s = shell_with_files(serde_json::json!({"f.txt": "a\nb\nc\nd\ne"}));
+    let (out, code, _) = s.run_line("tail -2 f.txt");
+    assert_eq!(code, 0);
+    assert_eq!(out, "d\ne");
+}

@@ -68,11 +68,14 @@ fn usermod_adds_to_group() {
     s.run_line("groupadd staff");
     let (out, code, _) = s.run_line("usermod -aG staff eve");
     assert_eq!(code, 0, "usermod failed: {:?}", out);
-    let grp = s.users.get_group_by_name("staff").unwrap();
-    assert!(
-        grp.members.contains(&"eve".to_string()),
-        "eve not in staff group"
-    );
+    let grp = s.users.get_group_by_name("staff");
+    assert!(grp.is_some(), "staff group not found");
+    if let Some(g) = grp {
+        assert!(
+            g.members.contains(&"eve".to_string()),
+            "eve not in staff group"
+        );
+    }
 }
 
 #[test]
@@ -82,8 +85,11 @@ fn su_switches_user() {
     let (out, code, _) = s.run_line("su frank");
     assert_eq!(code, 0, "su failed: {:?}", out);
     assert_eq!(s.user, "frank");
-    let frank = s.users.get_user_by_name("frank").unwrap();
-    assert_eq!(s.fs.current_uid(), frank.uid);
+    let frank = s.users.get_user_by_name("frank");
+    assert!(frank.is_some(), "frank not in UserDb");
+    if let Some(f) = frank {
+        assert_eq!(s.fs.current_uid(), f.uid);
+    }
 }
 
 #[test]
@@ -164,10 +170,14 @@ fn chown_accepts_username() {
     s.run_line("touch /home/u/file.txt");
     let (out, code, _) = s.run_line("sudo chown henry /home/u/file.txt");
     assert_eq!(code, 0, "chown with username failed: {:?}", out);
-    let henry = s.users.get_user_by_name("henry").unwrap();
-    let henry_uid = henry.uid;
-    let entry = s.fs.get("/home/u/file.txt").unwrap();
-    assert_eq!(entry.uid(), henry_uid, "file uid not updated");
+    let henry = s.users.get_user_by_name("henry");
+    assert!(henry.is_some(), "henry not in UserDb");
+    let henry_uid = henry.map(|h| h.uid).unwrap_or(0);
+    let entry = s.fs.get("/home/u/file.txt");
+    assert!(entry.is_some(), "file.txt not found");
+    if let Some(e) = entry {
+        assert_eq!(e.uid(), henry_uid, "file uid not updated");
+    }
 }
 
 // su to nonexistent user

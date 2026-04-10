@@ -122,7 +122,10 @@ impl Shell {
         if in_place {
             if let Some(ref f) = file {
                 let path = self.resolve(f);
-                let _ = self.fs.write(&path, output.as_bytes());
+                if let Err(e) = self.fs.write(&path, output.as_bytes()) {
+                    return (format!("sed: {}: {}", f, e), 1);
+                }
+                return (String::new(), 0);
             }
         }
 
@@ -130,15 +133,15 @@ impl Shell {
     }
 
     pub fn cmd_xxd(&self, args: &[String]) -> (String, i32) {
-        let file = args.iter().find(|a| !a.starts_with('-'));
-        let path = match file {
-            Some(f) => self.resolve(f),
+        let file_arg = match args.iter().find(|a| !a.starts_with('-')) {
+            Some(f) => f,
             None => return ("xxd: missing file operand".into(), 1),
         };
+        let path = self.resolve(file_arg);
 
         let bytes = match self.fs.read(&path) {
             Ok(b) => b,
-            Err(e) => return (format!("xxd: {}: {}", file.unwrap(), e), 1),
+            Err(e) => return (format!("xxd: {}: {}", file_arg, e), 1),
         };
 
         let mut out = Vec::new();

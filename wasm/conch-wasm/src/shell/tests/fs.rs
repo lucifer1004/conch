@@ -676,6 +676,123 @@ fn realpath_resolves_symlink() {
 
 // -- find uses walk_prefix --------------------------------------------------
 
+// --- H1: cat joins files with \n — should concatenate raw ---
+#[test]
+fn cat_multiple_files_no_extra_newline() {
+    let mut s = shell_with_files(serde_json::json!({"a.txt": "hello\n", "b.txt": "world\n"}));
+    let (out, code, _) = s.run_line("cat a.txt b.txt");
+    assert_eq!(code, 0);
+    assert_eq!(out, "hello\nworld\n"); // no double newline between files
+}
+
+// --- H3: ls ignores paths after first ---
+#[test]
+fn ls_multiple_paths() {
+    let mut s = shell();
+    s.run_line("mkdir d1 d2");
+    s.run_line("touch d1/a d2/b");
+    let (out, code, _) = s.run_line("ls d1 d2");
+    assert_eq!(code, 0);
+    assert!(out.contains("a"), "should list d1 contents: {out}");
+    assert!(out.contains("b"), "should list d2 contents: {out}");
+}
+
+// --- H4: rm -rf swallows errors ---
+#[test]
+fn rm_rf_nonexistent_with_force_succeeds() {
+    let mut s = shell();
+    let (_, code, _) = s.run_line("rm -rf nonexistent_dir");
+    assert_eq!(code, 0);
+}
+
+// --- H5: sed -i leaks content to stdout ---
+#[test]
+fn sed_i_no_stdout() {
+    let mut s = shell_with_files(serde_json::json!({"f.txt": "hello world"}));
+    let (out, code, _) = s.run_line("sed -i 's/hello/bye/' f.txt");
+    assert_eq!(code, 0);
+    assert_eq!(out, "", "sed -i should produce no stdout");
+    let (content, _, _) = s.run_line("cat f.txt");
+    assert_eq!(content, "bye world");
+}
+
+// --- H6: mktemp name collision after delete ---
+#[test]
+fn mktemp_no_collision_after_delete() {
+    let mut s = shell();
+    let (path1, code1, _) = s.run_line("mktemp");
+    assert_eq!(code1, 0);
+    s.run_line(&format!("rm {}", path1.trim()));
+    let (path2, code2, _) = s.run_line("mktemp");
+    assert_eq!(code2, 0);
+    assert_ne!(path1.trim(), path2.trim(), "should not reuse deleted name");
+}
+
+// --- M1: cp multiple sources to directory ---
+#[test]
+fn cp_multiple_sources_to_dir() {
+    let mut s = shell();
+    s.run_line("echo a > a.txt");
+    s.run_line("echo b > b.txt");
+    s.run_line("mkdir dest");
+    let (_, code, _) = s.run_line("cp a.txt b.txt dest");
+    assert_eq!(code, 0);
+    let (a, _, _) = s.run_line("cat dest/a.txt");
+    let (b, _, _) = s.run_line("cat dest/b.txt");
+    assert_eq!(a, "a");
+    assert_eq!(b, "b");
+}
+
+// --- M2: chmod symbolic modes ---
+#[test]
+fn chmod_symbolic_plus_x() {
+    let mut s = shell();
+    s.run_line("touch f.txt");
+    let (_, code, _) = s.run_line("chmod +x f.txt");
+    assert_eq!(code, 0);
+    let (out, _, _) = s.run_line("stat f.txt");
+    assert!(out.contains("x"), "should have execute bit: {out}");
+}
+
+// --- M4: tee -a spurious newline ---
+#[test]
+fn tee_append_no_extra_newline() {
+    let mut s = shell();
+    s.run_line("echo -n hello | tee f.txt");
+    s.run_line("echo -n world | tee -a f.txt");
+    let (out, _, _) = s.run_line("cat f.txt");
+    assert_eq!(out, "helloworld"); // no spurious newline between
+}
+
+// --- M10: find path after flags ---
+#[test]
+fn find_path_first_arg() {
+    let mut s = shell();
+    s.run_line("mkdir -p d/sub");
+    s.run_line("touch d/sub/f.txt");
+    let (out, code, _) = s.run_line("find d -type f");
+    assert_eq!(code, 0);
+    assert!(out.contains("f.txt"), "got: {out}");
+}
+
+// --- L1: ls -l symlink-to-dir shows 'l' not 'd' ---
+#[test]
+fn ls_long_symlink_to_dir_shows_l() {
+    let mut s = shell();
+    s.run_line("mkdir realdir");
+    s.run_line("ln -s realdir linkdir");
+    let (out, code, _) = s.run_line("ls -l");
+    assert_eq!(code, 0);
+    // Find the line for linkdir — it should start with 'l' not 'd'
+    let link_line = out.lines().find(|l| l.contains("linkdir"));
+    assert!(link_line.is_some(), "linkdir not in ls output: {out}");
+    let ll = link_line.unwrap_or("");
+    assert!(
+        ll.starts_with('l'),
+        "symlink line should start with 'l', got: {ll}"
+    );
+}
+
 #[test]
 fn find_in_subtree() {
     let mut s = shell();

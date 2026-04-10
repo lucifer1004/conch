@@ -97,7 +97,7 @@ fn which_only_finds_builtins() {
 
 #[test]
 fn date_uses_config_env_date() {
-    let c: Config = serde_json::from_value(serde_json::json!({
+    let val = serde_json::json!({
         "user": "u",
         "system": {
             "hostname": "h",
@@ -105,8 +105,13 @@ fn date_uses_config_env_date() {
         },
         "commands": [],
         "date": "Wed Apr  8 12:00:00 UTC 2026",
-    }))
-    .unwrap();
+    });
+    let parsed: Result<Config, _> = serde_json::from_value(val);
+    assert!(parsed.is_ok(), "config parse failed");
+    let c = match parsed {
+        Ok(c) => c,
+        Err(_) => return,
+    };
     let mut s = Shell::new(&c);
     let (out, code, _) = s.run_line("date");
     assert_eq!(code, 0);
@@ -203,6 +208,6 @@ fn hostname_returns_configured_name() {
 fn type_unknown_command() {
     let mut s = shell();
     let (out, code, _) = s.run_line("type nosuchcmd");
-    assert_eq!(code, 0);
+    assert_ne!(code, 0);
     assert!(out.contains("not found"), "got {:?}", out);
 }

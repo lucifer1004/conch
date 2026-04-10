@@ -38,7 +38,7 @@ fn pipe_feeds_stdin() {
     let (out, code, _) = s.run_line("echo ab | wc");
     assert_eq!(code, 0);
     // stdin `wc` prints: lines, words, bytes — last field is byte count (`echo` has no trailing newline)
-    let last = out.split_whitespace().last().expect("wc output");
+    let last = out.split_whitespace().last().unwrap_or("?");
     assert_eq!(last, "2");
 }
 

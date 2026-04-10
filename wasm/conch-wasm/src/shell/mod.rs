@@ -27,6 +27,7 @@ pub struct Shell {
     pub(crate) env: BTreeMap<String, String>,
     pub(crate) last_exit_code: i32,
     pub(crate) users: UserDb,
+    pub(crate) tmp_counter: u64,
 }
 
 impl Shell {
@@ -178,6 +179,7 @@ impl Shell {
             env,
             last_exit_code: 0,
             users: users_db,
+            tmp_counter: 0,
         }
     }
 

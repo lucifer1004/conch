@@ -101,31 +101,58 @@ impl Shell {
     }
 
     pub fn cmd_wc(&self, args: &[String], stdin: Option<&str>) -> (String, i32) {
-        let file_args: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
+        let mut line_only = false;
+        let mut word_only = false;
+        let mut char_only = false;
+        let mut file_args: Vec<&String> = Vec::new();
+
+        for arg in args {
+            if arg.starts_with('-') && arg.len() > 1 {
+                for c in arg[1..].chars() {
+                    match c {
+                        'l' => line_only = true,
+                        'w' => word_only = true,
+                        'c' | 'm' => char_only = true,
+                        _ => {}
+                    }
+                }
+            } else {
+                file_args.push(arg);
+            }
+        }
+
+        let show_all = !line_only && !word_only && !char_only;
+
+        let format_counts = |content: &str, name: Option<&str>| -> String {
+            let lines = content.matches('\n').count();
+            let words = content.split_whitespace().count();
+            let bytes = content.len();
+            let mut parts = Vec::new();
+            if show_all || line_only {
+                parts.push(format!("  {}", lines));
+            }
+            if show_all || word_only {
+                parts.push(format!("  {}", words));
+            }
+            if show_all || char_only {
+                parts.push(format!("  {}", bytes));
+            }
+            if let Some(n) = name {
+                parts.push(format!(" {}", n));
+            }
+            parts.join("")
+        };
+
         if file_args.is_empty() {
             let input = stdin.unwrap_or("");
-            return (
-                format!(
-                    "  {}  {}  {}",
-                    input.lines().count(),
-                    input.split_whitespace().count(),
-                    input.len()
-                ),
-                0,
-            );
+            return (format_counts(input, None), 0);
         }
         let mut out = Vec::new();
         for arg in &file_args {
             let path = self.resolve(arg);
             match self.fs.read_to_string(&path) {
                 Ok(c) => {
-                    out.push(format!(
-                        "  {}  {}  {} {}",
-                        c.lines().count(),
-                        c.split_whitespace().count(),
-                        c.len(),
-                        arg
-                    ));
+                    out.push(format_counts(c, Some(arg)));
                 }
                 Err(e) => return (format!("wc: {}: {}", arg, e), 1),
             }
@@ -465,24 +492,29 @@ impl Shell {
 
     pub fn cmd_seq(&self, args: &[String]) -> (String, i32) {
         let nums: Vec<i64> = args.iter().filter_map(|a| a.parse().ok()).collect();
-        let (start, end) = match nums.len() {
-            1 => (1, nums[0]),
-            2 => (nums[0], nums[1]),
+        let (start, step, end) = match nums.len() {
+            1 => (1, 1, nums[0]),
+            2 => (nums[0], 1, nums[1]),
+            3 => (nums[0], nums[1], nums[2]),
             _ => return ("seq: missing operand".into(), 1),
         };
 
+        if step == 0 {
+            return ("seq: zero increment".into(), 1);
+        }
+
         let mut results = Vec::new();
-        if start <= end {
+        if step > 0 {
             let mut i = start;
             while i <= end {
                 results.push(i.to_string());
-                i += 1;
+                i += step;
             }
         } else {
             let mut i = start;
             while i >= end {
                 results.push(i.to_string());
-                i -= 1;
+                i += step;
             }
         }
 
@@ -609,7 +641,22 @@ impl Shell {
     fn parse_n_file(args: &[String], default_n: usize) -> (usize, Option<String>) {
         let mut n = default_n;
         let mut file = None;
-        let mut parser = lexopt::Parser::from_args(args.iter().cloned());
+
+        // Pre-scan for -N shorthand (e.g., "-3" means -n 3)
+        let mut transformed: Vec<String> = Vec::new();
+        for arg in args {
+            if arg.starts_with('-') && arg.len() > 1 {
+                let rest = &arg[1..];
+                if rest.chars().all(|c| c.is_ascii_digit()) {
+                    transformed.push("-n".to_string());
+                    transformed.push(rest.to_string());
+                    continue;
+                }
+            }
+            transformed.push(arg.clone());
+        }
+
+        let mut parser = lexopt::Parser::from_args(transformed);
         loop {
             match parser.next() {
                 Ok(Some(lexopt::Arg::Short('n'))) => {

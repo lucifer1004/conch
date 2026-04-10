@@ -55,14 +55,16 @@ impl Shell {
             return (String::new(), 1);
         }
         let mut out = Vec::new();
+        let mut any_failed = false;
         for arg in args {
             if crate::commands::BUILTINS.contains(&arg.as_str()) {
                 out.push(format!("/bin/{}", arg));
             } else {
-                return (format!("which: no {} in (/bin)", arg), 1);
+                out.push(format!("which: no {} in (/bin)", arg));
+                any_failed = true;
             }
         }
-        (out.join("\n"), 0)
+        (out.join("\n"), if any_failed { 1 } else { 0 })
     }
 
     pub fn cmd_type(&self, args: &[String]) -> (String, i32) {
@@ -70,14 +72,16 @@ impl Shell {
             return (String::new(), 1);
         }
         let mut out = Vec::new();
+        let mut any_failed = false;
         for arg in args {
             if crate::commands::BUILTINS.contains(&arg.as_str()) {
                 out.push(format!("{} is a shell builtin", arg));
             } else {
                 out.push(format!("type: {}: not found", arg));
+                any_failed = true;
             }
         }
-        (out.join("\n"), 0)
+        (out.join("\n"), if any_failed { 1 } else { 0 })
     }
 
     pub fn cmd_basename(&self, args: &[String]) -> (String, i32) {

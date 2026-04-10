@@ -196,3 +196,37 @@ fn xxd_from_stdin() {
     // If it works, output should contain hex
     assert!(code == 0 || code == 1);
 }
+
+// --- M9: sed -i discards write errors (return empty stdout) ---
+#[test]
+fn sed_i_returns_empty_on_success() {
+    let mut s = shell_with_files(serde_json::json!({"g.txt": "foo bar"}));
+    let (out, code, _) = s.run_line("sed -i 's/foo/baz/' g.txt");
+    assert_eq!(code, 0);
+    assert_eq!(out, "", "sed -i should produce no stdout, got: {out}");
+}
+
+// --- M12: base64 no file no stdin returns empty ---
+#[test]
+fn base64_no_input_returns_empty() {
+    let mut s = shell();
+    // base64 with no file and no stdin should produce empty output
+    let (out, code, _) = s.run_line("base64");
+    assert_eq!(code, 0);
+    assert!(
+        out.is_empty(),
+        "base64 with no input should be empty: {out}"
+    );
+}
+
+// --- L6: readlink -f ---
+#[test]
+fn readlink_f_resolves_canonically() {
+    let mut s = shell();
+    s.run_line("mkdir -p real/dir");
+    s.run_line("echo x > real/dir/file.txt");
+    s.run_line("ln -s real/dir link");
+    let (out, code, _) = s.run_line("readlink -f link/file.txt");
+    assert_eq!(code, 0);
+    assert!(out.trim().ends_with("/real/dir/file.txt"), "got: {out}");
+}
