@@ -12,11 +12,11 @@ fn roundtrip_empty() {
 }
 
 #[test]
-fn roundtrip_with_files() {
+fn roundtrip_with_files() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir_all("/a/b");
-    fs.write("/a/b/file.txt", "hello world");
-    fs.write_with_mode("/secret", "data", 0o600);
+    fs.create_dir_all("/a/b")?;
+    fs.write("/a/b/file.txt", "hello world")?;
+    fs.write_with_mode("/secret", "data", 0o600)?;
     fs.symlink("/a/b/file.txt", "/link").unwrap();
 
     let json = serde_json::to_string(&fs).unwrap();
@@ -26,15 +26,18 @@ fn roundtrip_with_files() {
     assert_eq!(fs2.metadata("/secret").unwrap().mode(), 0o600);
     assert!(fs2.is_symlink("/link"));
     assert_eq!(fs2.read_link("/link").unwrap(), "/a/b/file.txt");
+    Ok(())
 }
 
 #[test]
-fn roundtrip_preserves_settings() {
+fn roundtrip_preserves_settings() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
+    // Make root world-writable so uid=1000 can create files in /
+    fs.set_mode("/", 0o777).unwrap();
     fs.set_current_user(1000, 1000);
     fs.set_umask(0o077);
     fs.set_time(500);
-    fs.write("/f", "x");
+    fs.write("/f", "x")?;
 
     let json = serde_json::to_string(&fs).unwrap();
     let fs2: MemFs = serde_json::from_str(&json).unwrap();
@@ -43,24 +46,26 @@ fn roundtrip_preserves_settings() {
     assert_eq!(fs2.current_gid(), 1000);
     assert_eq!(fs2.umask(), 0o077);
     assert_eq!(fs2.time(), fs.time());
+    Ok(())
 }
 
 #[test]
-fn roundtrip_preserves_timestamps() {
+fn roundtrip_preserves_timestamps() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/a", "data");
+    fs.write("/a", "data")?;
     let mtime = fs.metadata("/a").unwrap().mtime();
 
     let json = serde_json::to_string(&fs).unwrap();
     let fs2: MemFs = serde_json::from_str(&json).unwrap();
 
     assert_eq!(fs2.metadata("/a").unwrap().mtime(), mtime);
+    Ok(())
 }
 
 #[test]
-fn roundtrip_hard_links() {
+fn roundtrip_hard_links() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/a.txt", "shared");
+    fs.write("/a.txt", "shared")?;
     fs.hard_link("/a.txt", "/b.txt").unwrap();
 
     let json = serde_json::to_string(&fs).unwrap();
@@ -81,6 +86,7 @@ fn roundtrip_hard_links() {
     let mut fs2 = fs2;
     fs2.append("/a.txt", b" data").unwrap();
     assert_eq!(fs2.read_to_string("/b.txt").unwrap(), "shared data");
+    Ok(())
 }
 
 #[test]
@@ -106,14 +112,15 @@ fn deserialize_invalid_root_ino_fails() {
 }
 
 #[test]
-fn deserialize_root_ino_pointing_to_file_fails() {
+fn deserialize_root_ino_pointing_to_file_fails() -> Result<(), VfsError> {
     // Construct a snapshot where root_ino points to a File inode, not a Dir
     let mut fs = MemFs::new();
-    fs.write("/f", "data");
+    fs.write("/f", "data")?;
     let mut snap: serde_json::Value = serde_json::to_value(&fs).unwrap();
     // Find the inode number of /f and set root_ino to it
     let file_ino = fs.metadata("/f").unwrap().ino();
     snap["root_ino"] = serde_json::json!(file_ino);
     let result: Result<MemFs, _> = serde_json::from_value(snap);
     assert!(result.is_err());
+    Ok(())
 }

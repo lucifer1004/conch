@@ -121,10 +121,11 @@ impl MemFs {
     /// overwriting the file at `path`.
     ///
     /// This is a no-op if the handle was not opened for writing.
-    pub fn commit(&mut self, path: &str, handle: FileHandle) {
+    pub fn commit(&mut self, path: &str, handle: FileHandle) -> Result<(), VfsError> {
         if handle.writable {
-            self.write(path, handle.into_inner());
+            self.write(path, handle.into_inner())?;
         }
+        Ok(())
     }
 }
 
@@ -138,24 +139,26 @@ mod tests {
     use std::io::{Read, Write};
 
     #[test]
-    fn open_and_read() {
+    fn open_and_read() -> Result<(), VfsError> {
         let mut fs = MemFs::new();
-        fs.write("/f.txt", "hello".to_string());
+        fs.write("/f.txt", "hello".to_string())?;
         let mut h = fs.open("/f.txt").unwrap();
         let mut buf = String::new();
         h.read_to_string(&mut buf).unwrap();
         assert_eq!(buf, "hello");
+        Ok(())
     }
 
     #[test]
-    fn open_and_seek() {
+    fn open_and_seek() -> Result<(), VfsError> {
         let mut fs = MemFs::new();
-        fs.write("/f.txt", "abcdef".to_string());
+        fs.write("/f.txt", "abcdef".to_string())?;
         let mut h = fs.open("/f.txt").unwrap();
         h.seek(SeekFrom::Start(3)).unwrap();
         let mut buf = String::new();
         h.read_to_string(&mut buf).unwrap();
         assert_eq!(buf, "def");
+        Ok(())
     }
 
     #[test]
@@ -166,28 +169,30 @@ mod tests {
     }
 
     #[test]
-    fn open_permission_denied() {
+    fn open_permission_denied() -> Result<(), VfsError> {
         let mut fs = MemFs::new();
-        fs.write_with_mode("/secret", "x", 0o000);
+        fs.write_with_mode("/secret", "x", 0o000)?;
         fs.set_current_user(1000, 1000);
         let err = fs.open("/secret").unwrap_err();
         assert_eq!(*err.kind(), VfsErrorKind::PermissionDenied);
+        Ok(())
     }
 
     #[test]
-    fn open_binary() {
+    fn open_binary() -> Result<(), VfsError> {
         let mut fs = MemFs::new();
-        fs.write("/bin", vec![0u8, 1, 2, 0xFF]);
+        fs.write("/bin", vec![0u8, 1, 2, 0xFF])?;
         let mut h = fs.open("/bin").unwrap();
         let mut buf = Vec::new();
         h.read_to_end(&mut buf).unwrap();
         assert_eq!(buf, vec![0u8, 1, 2, 0xFF]);
+        Ok(())
     }
 
     #[test]
-    fn handle_len_and_position() {
+    fn handle_len_and_position() -> Result<(), VfsError> {
         let mut fs = MemFs::new();
-        fs.write("/f.txt", "abc".to_string());
+        fs.write("/f.txt", "abc".to_string())?;
         let mut h = fs.open("/f.txt").unwrap();
         assert_eq!(h.len(), 3);
         assert!(!h.is_empty());
@@ -195,20 +200,22 @@ mod tests {
         let mut buf = [0u8; 2];
         h.read_exact(&mut buf).unwrap();
         assert_eq!(h.position(), 2);
+        Ok(())
     }
 
     #[test]
-    fn into_inner() {
+    fn into_inner() -> Result<(), VfsError> {
         let mut fs = MemFs::new();
-        fs.write("/f.txt", "data".to_string());
+        fs.write("/f.txt", "data".to_string())?;
         let h = fs.open("/f.txt").unwrap();
         assert_eq!(h.into_inner(), b"data");
+        Ok(())
     }
 
     #[test]
-    fn write_and_commit() {
+    fn write_and_commit() -> Result<(), VfsError> {
         let mut fs = MemFs::new();
-        fs.write("/f.txt", "hello");
+        fs.write("/f.txt", "hello")?;
         let mut h = crate::open_options::OpenOptions::new()
             .read(true)
             .write(true)
@@ -217,14 +224,15 @@ mod tests {
         // Seek to end and append
         h.seek(SeekFrom::End(0)).unwrap();
         h.write_all(b" world").unwrap();
-        fs.commit("/f.txt", h);
+        fs.commit("/f.txt", h)?;
         assert_eq!(fs.read_to_string("/f.txt").unwrap(), "hello world");
+        Ok(())
     }
 
     #[test]
-    fn write_at_position() {
+    fn write_at_position() -> Result<(), VfsError> {
         let mut fs = MemFs::new();
-        fs.write("/f.txt", "hello");
+        fs.write("/f.txt", "hello")?;
         let mut h = crate::open_options::OpenOptions::new()
             .read(true)
             .write(true)
@@ -232,14 +240,15 @@ mod tests {
             .unwrap();
         h.seek(SeekFrom::Start(1)).unwrap();
         h.write_all(b"a").unwrap();
-        fs.commit("/f.txt", h);
+        fs.commit("/f.txt", h)?;
         assert_eq!(fs.read_to_string("/f.txt").unwrap(), "hallo");
+        Ok(())
     }
 
     #[test]
-    fn write_extends_buffer() {
+    fn write_extends_buffer() -> Result<(), VfsError> {
         let mut fs = MemFs::new();
-        fs.write("/f.txt", "hi");
+        fs.write("/f.txt", "hi")?;
         let mut h = crate::open_options::OpenOptions::new()
             .read(true)
             .write(true)
@@ -248,22 +257,24 @@ mod tests {
         h.seek(SeekFrom::End(0)).unwrap();
         h.write_all(b"!!").unwrap();
         assert_eq!(h.len(), 4);
-        fs.commit("/f.txt", h);
+        fs.commit("/f.txt", h)?;
         assert_eq!(fs.read_to_string("/f.txt").unwrap(), "hi!!");
+        Ok(())
     }
 
     #[test]
-    fn commit_to_different_path() {
+    fn commit_to_different_path() -> Result<(), VfsError> {
         let mut fs = MemFs::new();
-        fs.write("/src.txt", "original");
+        fs.write("/src.txt", "original")?;
         // commit on a read-only handle is a no-op; use write handle for real commit
         let h = crate::open_options::OpenOptions::new()
             .read(true)
             .write(true)
             .open(&mut fs, "/src.txt")
             .unwrap();
-        fs.commit("/dst.txt", h);
+        fs.commit("/dst.txt", h)?;
         assert_eq!(fs.read_to_string("/dst.txt").unwrap(), "original");
         assert_eq!(fs.read_to_string("/src.txt").unwrap(), "original");
+        Ok(())
     }
 }

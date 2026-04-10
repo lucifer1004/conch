@@ -662,7 +662,11 @@ impl MemFs {
     ///
     /// If the path already points to an existing file inode, the content is
     /// updated in-place so that hard links to the same inode see the change.
-    pub fn write(&mut self, path: &str, content: impl Into<Vec<u8>>) {
+    ///
+    /// Returns an error if the path is an existing directory, if the parent
+    /// directory does not exist or is not writable, or if write permission on
+    /// the existing file is denied.
+    pub fn write(&mut self, path: &str, content: impl Into<Vec<u8>>) -> Result<(), VfsError> {
         let now = self.tick();
         let content = content.into();
         let mode = self.effective_mode(0o644);
@@ -670,10 +674,14 @@ impl MemFs {
         // Try to update existing file inode in-place (preserves hard links)
         if let Ok((ino, _)) = self.traverse(path) {
             if let Some(inode) = self.inodes.get(&ino) {
+                // Refuse to overwrite a directory with a file
+                if inode.is_dir() {
+                    return Err(VfsErrorKind::IsADirectory.into());
+                }
                 if matches!(inode.kind, InodeKind::File { .. }) {
                     // Check write permission on the existing inode
                     if !self.check_permission(inode, 2) {
-                        return;
+                        return Err(VfsErrorKind::PermissionDenied.into());
                     }
                 }
             }
@@ -683,15 +691,15 @@ impl MemFs {
                     inode.mtime = now;
                     inode.ctime = now;
                     inode.atime = now;
-                    return;
+                    return Ok(());
                 }
             }
         }
 
-        // File doesn't exist or path points to dir/symlink — create new inode
+        // File doesn't exist or path points to symlink — create new inode
         // Check parent directory write permission first
         if !self.check_parent_write(path) {
-            return;
+            return Err(VfsErrorKind::PermissionDenied.into());
         }
         let ino = self.alloc_ino();
         let uid = self.current_uid;
@@ -713,9 +721,11 @@ impl MemFs {
             if let Some(old_ino) = children.insert(name, ino) {
                 self.dec_nlink(old_ino);
             }
+            Ok(())
         } else {
             // Parent doesn't exist, clean up
             self.inodes.remove(&ino);
+            Err(VfsErrorKind::NotFound.into())
         }
     }
 
@@ -724,7 +734,16 @@ impl MemFs {
     /// If the path already points to an existing file inode, the content and
     /// mode are updated in-place so that hard links to the same inode see the
     /// change.
-    pub fn write_with_mode(&mut self, path: &str, content: impl Into<Vec<u8>>, mode: u16) {
+    ///
+    /// Returns an error if the path is an existing directory, if the parent
+    /// directory does not exist or is not writable, or if write permission on
+    /// the existing file is denied.
+    pub fn write_with_mode(
+        &mut self,
+        path: &str,
+        content: impl Into<Vec<u8>>,
+        mode: u16,
+    ) -> Result<(), VfsError> {
         let now = self.tick();
         let content = content.into();
         let effective = self.effective_mode(mode);
@@ -732,10 +751,14 @@ impl MemFs {
         // Try to update existing file inode in-place (preserves hard links)
         if let Ok((ino, _)) = self.traverse(path) {
             if let Some(inode) = self.inodes.get(&ino) {
+                // Refuse to overwrite a directory with a file
+                if inode.is_dir() {
+                    return Err(VfsErrorKind::IsADirectory.into());
+                }
                 if matches!(inode.kind, InodeKind::File { .. }) {
                     // Check write permission on the existing inode
                     if !self.check_permission(inode, 2) {
-                        return;
+                        return Err(VfsErrorKind::PermissionDenied.into());
                     }
                 }
             }
@@ -746,15 +769,15 @@ impl MemFs {
                     inode.mtime = now;
                     inode.ctime = now;
                     inode.atime = now;
-                    return;
+                    return Ok(());
                 }
             }
         }
 
-        // File doesn't exist or path points to dir/symlink — create new inode
+        // File doesn't exist or path points to symlink — create new inode
         // Check parent directory write permission first
         if !self.check_parent_write(path) {
-            return;
+            return Err(VfsErrorKind::PermissionDenied.into());
         }
         let ino = self.alloc_ino();
         let uid = self.current_uid;
@@ -776,8 +799,10 @@ impl MemFs {
             if let Some(old_ino) = children.insert(name, ino) {
                 self.dec_nlink(old_ino);
             }
+            Ok(())
         } else {
             self.inodes.remove(&ino);
+            Err(VfsErrorKind::NotFound.into())
         }
     }
 
@@ -857,7 +882,10 @@ impl MemFs {
 
     /// Create a directory and all missing ancestors.
     /// Follows symlinks in intermediate path components.
-    pub fn create_dir_all(&mut self, path: &str) {
+    ///
+    /// Returns an error if any existing path component is not a directory, or
+    /// if a parent directory along the path is not writable.
+    pub fn create_dir_all(&mut self, path: &str) -> Result<(), VfsError> {
         let now = self.tick();
         let dir_mode = self.effective_mode(0o755);
         let uid = self.current_uid;
@@ -869,8 +897,12 @@ impl MemFs {
             let prefix = alloc::format!("/{}", components[..i].join("/"));
             match self.traverse(&prefix) {
                 Ok((_, inode)) if inode.is_dir() => continue,
-                Ok(_) => return, // exists but not a dir
-                Err(_) => {}     // doesn't exist, create it
+                Ok(_) => return Err(VfsErrorKind::NotADirectory.into()), // exists but not a dir
+                Err(_) => {}                                             // doesn't exist, create it
+            }
+            // Check parent write permission before creating
+            if !self.check_parent_write(&prefix) {
+                return Err(VfsErrorKind::PermissionDenied.into());
             }
             let new_ino = self.alloc_ino();
             self.inodes.insert(
@@ -892,14 +924,18 @@ impl MemFs {
                 children.insert(name, new_ino);
             } else {
                 self.inodes.remove(&new_ino);
-                return;
+                return Err(VfsErrorKind::NotFound.into());
             }
         }
+        Ok(())
     }
 
     /// Create an empty file if `path` does not already exist.
     /// If it already exists, updates `mtime` (like Unix `touch`).
-    pub fn touch(&mut self, path: &str) {
+    ///
+    /// Returns an error if the parent directory does not exist or is not
+    /// writable.
+    pub fn touch(&mut self, path: &str) -> Result<(), VfsError> {
         let now = self.tick();
         let file_mode = self.effective_mode(0o644);
         // Try to update existing
@@ -908,11 +944,11 @@ impl MemFs {
                 inode.mtime = now;
                 inode.atime = now;
             }
-            return;
+            return Ok(());
         }
         // Check parent directory write permission before creating new file
         if !self.check_parent_write(path) {
-            return;
+            return Err(VfsErrorKind::PermissionDenied.into());
         }
         let uid = self.current_uid;
         let gid = self.current_gid;
@@ -920,7 +956,7 @@ impl MemFs {
         let normalized = crate::normalize(path);
         let components = split_path(&normalized);
         if components.is_empty() {
-            return;
+            return Err(VfsErrorKind::NotFound.into());
         }
         // Try to insert into parent
         let ino = self.alloc_ino();
@@ -942,10 +978,10 @@ impl MemFs {
         if let Some((children, name)) = self.traverse_parent_mut(path) {
             // Only insert if not already there (or_insert semantics)
             children.entry(name).or_insert(ino);
-            // If we didn't actually use our ino (entry existed), clean up
-            // But since we checked traverse above and it failed, the entry shouldn't exist.
+            Ok(())
         } else {
             self.inodes.remove(&ino);
+            Err(VfsErrorKind::NotFound.into())
         }
     }
 
@@ -985,6 +1021,10 @@ impl MemFs {
             Ok((_, n)) if n.is_dir() => {}
             Ok(_) => return Err(VfsError::from(VfsErrorKind::NotADirectory)),
             Err(e) => return Err(e),
+        }
+        // Check write permission on parent directory
+        if !self.check_parent_write(path) {
+            return Err(VfsErrorKind::PermissionDenied.into());
         }
         let path_str = path.to_string();
         if let Some((children, name)) = self.traverse_parent_mut(&path_str) {

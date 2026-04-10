@@ -5,11 +5,11 @@ use alloc::vec;
 // -- Walk iterator tests ----------------------------------------------------
 
 #[test]
-fn walk_yields_all_entries() {
+fn walk_yields_all_entries() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir_all("/a/b");
-    fs.write("/a/b/f.txt", "x");
-    fs.write("/other", "y");
+    fs.create_dir_all("/a/b")?;
+    fs.write("/a/b/f.txt", "x")?;
+    fs.write("/other", "y")?;
 
     let entries: alloc::vec::Vec<_> = fs.walk().collect();
     let paths: alloc::vec::Vec<&str> = entries.iter().map(|(p, _)| p.as_str()).collect();
@@ -19,26 +19,28 @@ fn walk_yields_all_entries() {
     assert!(paths.contains(&"/a/b"));
     assert!(paths.contains(&"/a/b/f.txt"));
     assert!(paths.contains(&"/other"));
+    Ok(())
 }
 
 #[test]
-fn walk_matches_iter() {
+fn walk_matches_iter() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir_all("/x/y");
-    fs.write("/x/y/z", "data");
-    fs.write("/top", "hi");
+    fs.create_dir_all("/x/y")?;
+    fs.write("/x/y/z", "data")?;
+    fs.write("/top", "hi")?;
 
     let walk_entries: alloc::vec::Vec<_> = fs.walk().collect();
     let iter_entries = fs.iter();
     assert_eq!(walk_entries.len(), iter_entries.len());
+    Ok(())
 }
 
 #[test]
-fn walk_prefix_subtree() {
+fn walk_prefix_subtree() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir_all("/a/b");
-    fs.write("/a/b/f.txt", "x");
-    fs.write("/other", "y");
+    fs.create_dir_all("/a/b")?;
+    fs.write("/a/b/f.txt", "x")?;
+    fs.write("/other", "y")?;
 
     let entries: alloc::vec::Vec<_> = fs.walk_prefix("/a").collect();
     let paths: alloc::vec::Vec<&str> = entries.iter().map(|(p, _)| p.as_str()).collect();
@@ -47,6 +49,7 @@ fn walk_prefix_subtree() {
     assert!(paths.contains(&"/a/b"));
     assert!(paths.contains(&"/a/b/f.txt"));
     assert!(!paths.contains(&"/other"));
+    Ok(())
 }
 
 #[test]
@@ -66,10 +69,10 @@ fn walk_empty_fs() {
 // -- ReadDirIter tests ------------------------------------------------------
 
 #[test]
-fn read_dir_iter_yields_entries() {
+fn read_dir_iter_yields_entries() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/a", "x");
-    fs.write("/b", "y");
+    fs.write("/a", "x")?;
+    fs.write("/b", "y")?;
     fs.create_dir("/c").unwrap();
 
     let entries: alloc::vec::Vec<_> = fs.read_dir_iter("/").unwrap().collect();
@@ -77,16 +80,18 @@ fn read_dir_iter_yields_entries() {
     assert_eq!(entries[0].name, "a");
     assert_eq!(entries[1].name, "b");
     assert_eq!(entries[2].name, "c");
+    Ok(())
 }
 
 #[test]
-fn read_dir_iter_exact_size() {
+fn read_dir_iter_exact_size() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/a", "x");
-    fs.write("/b", "y");
+    fs.write("/a", "x")?;
+    fs.write("/b", "y")?;
 
     let iter = fs.read_dir_iter("/").unwrap();
     assert_eq!(iter.len(), 2);
+    Ok(())
 }
 
 #[test]
@@ -96,21 +101,22 @@ fn read_dir_iter_not_found() {
 }
 
 #[test]
-fn read_dir_iter_on_file() {
+fn read_dir_iter_on_file() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/f", "x");
+    fs.write("/f", "x")?;
     let err = fs.read_dir_iter("/f").unwrap_err();
     assert_eq!(*err.kind(), VfsErrorKind::NotADirectory);
+    Ok(())
 }
 
 // -- Subtree iteration tests ----------------------------------------------
 
 #[test]
-fn iter_prefix_subtree() {
+fn iter_prefix_subtree() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir_all("/a/b/c");
-    fs.write("/a/b/f.txt", "x");
-    fs.write("/other", "y");
+    fs.create_dir_all("/a/b/c")?;
+    fs.write("/a/b/f.txt", "x")?;
+    fs.write("/other", "y")?;
     let entries = fs.iter_prefix("/a");
     let paths: Vec<&str> = entries.iter().map(|(p, _)| p.as_str()).collect();
     assert!(paths.contains(&"/a"));
@@ -118,25 +124,28 @@ fn iter_prefix_subtree() {
     assert!(paths.contains(&"/a/b/c"));
     assert!(paths.contains(&"/a/b/f.txt"));
     assert!(!paths.contains(&"/other"));
+    Ok(())
 }
 
 #[test]
-fn iter_prefix_root_equals_iter() {
+fn iter_prefix_root_equals_iter() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/a", "x");
+    fs.write("/a", "x")?;
     fs.create_dir("/d").unwrap();
     let all = fs.iter();
     let root = fs.iter_prefix("/");
     assert_eq!(all.len(), root.len());
+    Ok(())
 }
 
 #[test]
-fn iter_prefix_single_file() {
+fn iter_prefix_single_file() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/f", "hello");
+    fs.write("/f", "hello")?;
     let entries = fs.iter_prefix("/f");
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].0, "/f");
+    Ok(())
 }
 
 #[test]
@@ -146,21 +155,22 @@ fn iter_prefix_missing() {
 }
 
 #[test]
-fn paths_prefix_subtree() {
+fn paths_prefix_subtree() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir_all("/x/y");
-    fs.write("/x/y/z", "data");
-    fs.write("/other", "data");
+    fs.create_dir_all("/x/y")?;
+    fs.write("/x/y/z", "data")?;
+    fs.write("/other", "data")?;
     let paths = fs.paths_prefix("/x");
     assert_eq!(paths, vec!["/x", "/x/y", "/x/y/z"]);
+    Ok(())
 }
 
 // -- DirEntry symlink tests ----------------------------------------------
 
 #[test]
-fn dir_entry_symlink_flag() {
+fn dir_entry_symlink_flag() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/file", "x");
+    fs.write("/file", "x")?;
     fs.create_dir("/dir").unwrap();
     fs.symlink("/file", "/link").unwrap();
     let entries = fs.read_dir("/").unwrap();
@@ -171,4 +181,5 @@ fn dir_entry_symlink_flag() {
     assert!(!file_e.is_symlink);
     assert!(link_e.is_symlink);
     assert!(!link_e.is_dir);
+    Ok(())
 }

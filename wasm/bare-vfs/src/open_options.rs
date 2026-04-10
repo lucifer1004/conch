@@ -97,7 +97,7 @@ impl OpenOptions {
             if !self.write && !self.append {
                 return Err(VfsErrorKind::PermissionDenied.into());
             }
-            fs.write_with_mode(path, b"" as &[u8], self.mode);
+            fs.write_with_mode(path, b"" as &[u8], self.mode)?;
         } else if !exists {
             return Err(VfsErrorKind::NotFound.into());
         }
@@ -170,9 +170,9 @@ mod tests {
     use std::io::{Read, Seek, SeekFrom, Write};
 
     #[test]
-    fn open_read_only() {
+    fn open_read_only() -> Result<(), VfsError> {
         let mut fs = MemFs::new();
-        fs.write("/f.txt", "hello");
+        fs.write("/f.txt", "hello")?;
         let mut handle = OpenOptions::new()
             .read(true)
             .open(&mut fs, "/f.txt")
@@ -180,6 +180,7 @@ mod tests {
         let mut buf = alloc::string::String::new();
         handle.read_to_string(&mut buf).unwrap();
         assert_eq!(buf, "hello");
+        Ok(())
     }
 
     #[test]
@@ -193,7 +194,7 @@ mod tests {
     }
 
     #[test]
-    fn open_create_new_file() {
+    fn open_create_new_file() -> Result<(), VfsError> {
         let mut fs = MemFs::new();
         let mut handle = OpenOptions::new()
             .write(true)
@@ -201,38 +202,41 @@ mod tests {
             .open(&mut fs, "/new.txt")
             .unwrap();
         handle.write_all(b"created").unwrap();
-        fs.commit("/new.txt", handle);
+        fs.commit("/new.txt", handle)?;
         assert_eq!(fs.read_to_string("/new.txt").unwrap(), "created");
+        Ok(())
     }
 
     #[test]
-    fn open_create_new_fails_if_exists() {
+    fn open_create_new_fails_if_exists() -> Result<(), VfsError> {
         let mut fs = MemFs::new();
-        fs.write("/f.txt", "existing");
+        fs.write("/f.txt", "existing")?;
         let err = OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&mut fs, "/f.txt")
             .unwrap_err();
         assert_eq!(*err.kind(), VfsErrorKind::AlreadyExists);
+        Ok(())
     }
 
     #[test]
-    fn open_truncate() {
+    fn open_truncate() -> Result<(), VfsError> {
         let mut fs = MemFs::new();
-        fs.write("/f.txt", "hello world");
+        fs.write("/f.txt", "hello world")?;
         let handle = OpenOptions::new()
             .write(true)
             .truncate(true)
             .open(&mut fs, "/f.txt")
             .unwrap();
         assert_eq!(handle.len(), 0);
+        Ok(())
     }
 
     #[test]
-    fn open_append_seeks_to_end() {
+    fn open_append_seeks_to_end() -> Result<(), VfsError> {
         let mut fs = MemFs::new();
-        fs.write("/f.txt", "hello");
+        fs.write("/f.txt", "hello")?;
         let mut handle = OpenOptions::new()
             .write(true)
             .append(true)
@@ -240,14 +244,15 @@ mod tests {
             .unwrap();
         assert_eq!(handle.position(), 5); // cursor at end
         handle.write_all(b" world").unwrap();
-        fs.commit("/f.txt", handle);
+        fs.commit("/f.txt", handle)?;
         assert_eq!(fs.read_to_string("/f.txt").unwrap(), "hello world");
+        Ok(())
     }
 
     #[test]
-    fn open_read_write() {
+    fn open_read_write() -> Result<(), VfsError> {
         let mut fs = MemFs::new();
-        fs.write("/f.txt", "hello");
+        fs.write("/f.txt", "hello")?;
         let mut handle = OpenOptions::new()
             .read(true)
             .write(true)
@@ -260,8 +265,9 @@ mod tests {
         // Seek back and overwrite
         handle.seek(SeekFrom::Start(0)).unwrap();
         handle.write_all(b"world").unwrap();
-        fs.commit("/f.txt", handle);
+        fs.commit("/f.txt", handle)?;
         assert_eq!(fs.read_to_string("/f.txt").unwrap(), "world");
+        Ok(())
     }
 
     #[test]

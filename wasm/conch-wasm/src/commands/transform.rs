@@ -122,7 +122,7 @@ impl Shell {
         if in_place {
             if let Some(ref f) = file {
                 let path = self.resolve(f);
-                self.fs.write(&path, output.as_bytes());
+                let _ = self.fs.write(&path, output.as_bytes());
             }
         }
 

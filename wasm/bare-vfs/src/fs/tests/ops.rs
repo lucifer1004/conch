@@ -5,41 +5,45 @@ use alloc::vec;
 // -- read / read_to_string / write --------------------------------------
 
 #[test]
-fn write_and_read_string() {
+fn write_and_read_string() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/hello.txt", "world".to_string());
+    fs.write("/hello.txt", "world".to_string())?;
     assert_eq!(fs.read_to_string("/hello.txt"), Ok("world"));
     assert_eq!(fs.read("/hello.txt"), Ok(b"world".as_slice()));
+    Ok(())
 }
 
 #[test]
-fn write_and_read_bytes() {
+fn write_and_read_bytes() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/bin", vec![0u8, 1, 0xFF]);
+    fs.write("/bin", vec![0u8, 1, 0xFF])?;
     assert_eq!(fs.read("/bin"), Ok([0u8, 1, 0xFF].as_slice()));
     assert_eq!(
         fs.read_to_string("/bin"),
         Err(VfsErrorKind::InvalidUtf8.into())
     );
+    Ok(())
 }
 
 #[test]
-fn write_overwrites_existing() {
+fn write_overwrites_existing() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/f.txt", "old".to_string());
-    fs.write("/f.txt", "new".to_string());
+    fs.write("/f.txt", "old".to_string())?;
+    fs.write("/f.txt", "new".to_string())?;
     assert_eq!(fs.read_to_string("/f.txt"), Ok("new"));
+    Ok(())
 }
 
 #[test]
-fn write_with_mode_sets_permissions() {
+fn write_with_mode_sets_permissions() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write_with_mode("/secret", "x".to_string(), 0o000);
+    fs.write_with_mode("/secret", "x".to_string(), 0o000)?;
     fs.set_current_user(1000, 1000);
     assert_eq!(
         fs.read("/secret"),
         Err(VfsErrorKind::PermissionDenied.into())
     );
+    Ok(())
 }
 
 #[test]
@@ -52,20 +56,22 @@ fn read_missing() {
 }
 
 #[test]
-fn read_directory() {
+fn read_directory() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir_all("/a");
+    fs.create_dir_all("/a")?;
     assert_eq!(fs.read("/a"), Err(VfsErrorKind::IsADirectory.into()));
+    Ok(())
 }
 
 // -- append -------------------------------------------------------------
 
 #[test]
-fn append_to_file() {
+fn append_to_file() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/log", "line1\n".to_string());
+    fs.write("/log", "line1\n".to_string())?;
     fs.append("/log", b"line2\n").unwrap();
     assert_eq!(fs.read_to_string("/log"), Ok("line1\nline2\n"));
+    Ok(())
 }
 
 #[test]
@@ -75,24 +81,26 @@ fn append_not_found() {
 }
 
 #[test]
-fn append_to_directory() {
+fn append_to_directory() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir_all("/d");
+    fs.create_dir_all("/d")?;
     assert_eq!(
         fs.append("/d", b"x"),
         Err(VfsErrorKind::IsADirectory.into())
     );
+    Ok(())
 }
 
 #[test]
-fn append_permission_denied() {
+fn append_permission_denied() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write_with_mode("/ro", "x", 0o444);
+    fs.write_with_mode("/ro", "x", 0o444)?;
     fs.set_current_user(1000, 1000);
     assert_eq!(
         fs.append("/ro", b"y"),
         Err(VfsErrorKind::PermissionDenied.into())
     );
+    Ok(())
 }
 
 // -- create_dir ---------------------------------------------------------
@@ -105,13 +113,14 @@ fn create_dir_single() {
 }
 
 #[test]
-fn create_dir_already_exists() {
+fn create_dir_already_exists() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir_all("/sub");
+    fs.create_dir_all("/sub")?;
     assert_eq!(
         fs.create_dir("/sub"),
         Err(VfsErrorKind::AlreadyExists.into())
     );
+    Ok(())
 }
 
 #[test]
@@ -121,9 +130,9 @@ fn create_dir_parent_missing() {
 }
 
 #[test]
-fn create_dir_all_and_list() {
+fn create_dir_all_and_list() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir_all("/a/b/c");
+    fs.create_dir_all("/a/b/c")?;
     assert!(fs.is_dir("/a"));
     assert!(fs.is_dir("/a/b"));
     assert!(fs.is_dir("/a/b/c"));
@@ -132,41 +141,46 @@ fn create_dir_all_and_list() {
     assert_eq!(children.len(), 1);
     assert_eq!(children[0].name, "b");
     assert!(children[0].is_dir);
+    Ok(())
 }
 
 #[test]
-fn create_dir_all_idempotent() {
+fn create_dir_all_idempotent() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir_all("/a/b/c");
-    fs.create_dir_all("/a/b/c");
+    fs.create_dir_all("/a/b/c")?;
+    fs.create_dir_all("/a/b/c")?;
     assert!(fs.is_dir("/a/b/c"));
+    Ok(())
 }
 
 // -- touch --------------------------------------------------------------
 
 #[test]
-fn touch_creates_empty_file() {
+fn touch_creates_empty_file() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.touch("/new.txt");
+    fs.touch("/new.txt")?;
     assert_eq!(fs.read("/new.txt"), Ok(b"".as_slice()));
+    Ok(())
 }
 
 #[test]
-fn touch_does_not_overwrite() {
+fn touch_does_not_overwrite() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/f.txt", "data".to_string());
-    fs.touch("/f.txt");
+    fs.write("/f.txt", "data".to_string())?;
+    fs.touch("/f.txt")?;
     assert_eq!(fs.read_to_string("/f.txt"), Ok("data"));
+    Ok(())
 }
 
 // -- remove / remove_dir_all --------------------------------------------
 
 #[test]
-fn remove_file() {
+fn remove_file() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/f.txt", "x".to_string());
+    fs.write("/f.txt", "x".to_string())?;
     assert!(fs.remove("/f.txt").is_some());
     assert!(!fs.exists("/f.txt"));
+    Ok(())
 }
 
 #[test]
@@ -176,26 +190,28 @@ fn remove_nonexistent() {
 }
 
 #[test]
-fn remove_dir_all_recursive() {
+fn remove_dir_all_recursive() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir_all("/a/b");
-    fs.write("/a/b/f.txt", "x".to_string());
-    fs.write("/a/g.txt", "y".to_string());
+    fs.create_dir_all("/a/b")?;
+    fs.write("/a/b/f.txt", "x".to_string())?;
+    fs.write("/a/g.txt", "y".to_string())?;
     assert!(fs.remove_dir_all("/a").is_ok());
     assert!(!fs.exists("/a"));
     assert!(!fs.exists("/a/b"));
     assert!(!fs.exists("/a/b/f.txt"));
+    Ok(())
 }
 
 #[test]
-fn remove_dir_all_preserves_siblings() {
+fn remove_dir_all_preserves_siblings() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir_all("/a/target");
-    fs.write("/a/target/f.txt", "x".to_string());
-    fs.write("/a/sibling.txt", "keep".to_string());
+    fs.create_dir_all("/a/target")?;
+    fs.write("/a/target/f.txt", "x".to_string())?;
+    fs.write("/a/sibling.txt", "keep".to_string())?;
     fs.remove_dir_all("/a/target").unwrap();
     assert!(!fs.exists("/a/target"));
     assert_eq!(fs.read_to_string("/a/sibling.txt"), Ok("keep"));
+    Ok(())
 }
 
 #[test]
@@ -208,21 +224,22 @@ fn remove_dir_all_not_found() {
 }
 
 #[test]
-fn remove_dir_all_on_file() {
+fn remove_dir_all_on_file() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/f.txt", "x".to_string());
+    fs.write("/f.txt", "x".to_string())?;
     assert_eq!(
         fs.remove_dir_all("/f.txt"),
         Err(VfsErrorKind::NotADirectory.into())
     );
+    Ok(())
 }
 
 // -- set_mode -----------------------------------------------------------
 
 #[test]
-fn set_mode_file() {
+fn set_mode_file() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/f.txt", "x".to_string());
+    fs.write("/f.txt", "x".to_string())?;
     fs.set_mode("/f.txt", 0o000).unwrap();
     fs.set_current_user(1000, 1000);
     assert_eq!(
@@ -233,14 +250,16 @@ fn set_mode_file() {
     fs.set_current_user(0, 0);
     fs.set_mode("/f.txt", 0o644).unwrap();
     assert_eq!(fs.read_to_string("/f.txt"), Ok("x"));
+    Ok(())
 }
 
 #[test]
-fn set_mode_dir() {
+fn set_mode_dir() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir_all("/d");
+    fs.create_dir_all("/d")?;
     fs.set_mode("/d", 0o500).unwrap();
     assert_eq!(fs.get("/d").unwrap().mode(), 0o500);
+    Ok(())
 }
 
 #[test]
@@ -255,12 +274,13 @@ fn set_mode_not_found() {
 // -- copy ---------------------------------------------------------------
 
 #[test]
-fn copy_file() {
+fn copy_file() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/a.txt", "hello".to_string());
+    fs.write("/a.txt", "hello".to_string())?;
     fs.copy("/a.txt", "/b.txt").unwrap();
     assert_eq!(fs.read_to_string("/b.txt"), Ok("hello"));
     assert_eq!(fs.read_to_string("/a.txt"), Ok("hello"));
+    Ok(())
 }
 
 #[test]
@@ -270,41 +290,45 @@ fn copy_not_found() {
 }
 
 #[test]
-fn copy_directory() {
+fn copy_directory() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir_all("/d");
+    fs.create_dir_all("/d")?;
     assert_eq!(fs.copy("/d", "/d2"), Err(VfsErrorKind::IsADirectory.into()));
+    Ok(())
 }
 
 #[test]
-fn copy_permission_denied() {
+fn copy_permission_denied() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write_with_mode("/secret", "x", 0o000);
+    fs.write_with_mode("/secret", "x", 0o000)?;
     fs.set_current_user(1000, 1000);
     assert_eq!(
         fs.copy("/secret", "/dst"),
         Err(VfsErrorKind::PermissionDenied.into())
     );
+    Ok(())
 }
 
 #[test]
-fn copy_overwrites_destination() {
+fn copy_overwrites_destination() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/src", "new".to_string());
-    fs.write("/dst", "old".to_string());
+    fs.write("/src", "new".to_string())?;
+    fs.write("/dst", "old".to_string())?;
     fs.copy("/src", "/dst").unwrap();
     assert_eq!(fs.read_to_string("/dst"), Ok("new"));
+    Ok(())
 }
 
 // -- rename -------------------------------------------------------------
 
 #[test]
-fn rename_file() {
+fn rename_file() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/old.txt", "data".to_string());
+    fs.write("/old.txt", "data".to_string())?;
     fs.rename("/old.txt", "/new.txt").unwrap();
     assert!(!fs.exists("/old.txt"));
     assert_eq!(fs.read_to_string("/new.txt"), Ok("data"));
+    Ok(())
 }
 
 #[test]
@@ -330,28 +354,31 @@ fn insert_raw_entry() {
 // -- Truncate tests -----------------------------------------------------
 
 #[test]
-fn truncate_shorter() {
+fn truncate_shorter() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/a", "hello world");
+    fs.write("/a", "hello world")?;
     fs.truncate("/a", 5).unwrap();
     assert_eq!(fs.read_to_string("/a").unwrap(), "hello");
+    Ok(())
 }
 
 #[test]
-fn truncate_longer_zero_fills() {
+fn truncate_longer_zero_fills() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/a", "hi");
+    fs.write("/a", "hi")?;
     fs.truncate("/a", 5).unwrap();
     let bytes = fs.read("/a").unwrap();
     assert_eq!(bytes, &[b'h', b'i', 0, 0, 0]);
+    Ok(())
 }
 
 #[test]
-fn truncate_to_zero() {
+fn truncate_to_zero() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/a", "data");
+    fs.write("/a", "data")?;
     fs.truncate("/a", 0).unwrap();
     assert_eq!(fs.read("/a").unwrap(), &[] as &[u8]);
+    Ok(())
 }
 
 #[test]
@@ -368,22 +395,24 @@ fn truncate_directory() {
 }
 
 #[test]
-fn truncate_permission_denied() {
+fn truncate_permission_denied() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write_with_mode("/a", "data", 0o444);
+    fs.write_with_mode("/a", "data", 0o444)?;
     fs.set_current_user(1000, 1000);
     assert!(
         matches!(fs.truncate("/a", 0), Err(ref e) if *e.kind() == VfsErrorKind::PermissionDenied)
     );
+    Ok(())
 }
 
 #[test]
-fn truncate_updates_timestamps() {
+fn truncate_updates_timestamps() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/a", "hello");
+    fs.write("/a", "hello")?;
     let t1 = fs.metadata("/a").unwrap().mtime();
     fs.truncate("/a", 3).unwrap();
     let m = fs.metadata("/a").unwrap();
     assert!(m.mtime() > t1);
     assert!(m.ctime() > t1);
+    Ok(())
 }

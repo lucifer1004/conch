@@ -85,7 +85,7 @@ impl Shell {
                     .clone()
                     .unwrap_or_else(|| format!("/home/{}", spec.name));
                 users_db.add_user_with_ids(&spec.name, uid, uid, &user_home);
-                fs.create_dir_all(&user_home);
+                let _ = fs.create_dir_all(&user_home);
                 fs.chown(&user_home, uid, uid).unwrap_or(());
             }
 
@@ -112,9 +112,13 @@ impl Shell {
             }
         }
 
+        // Create standard system directories as root before switching to user.
+        // /tmp is world-writable (0o1777 on real systems, 0o777 here)
+        let _ = fs.create_dir_all("/tmp");
+        let _ = fs.set_mode("/tmp", 0o777);
         // Create home hierarchy as root so intermediate dirs (e.g. /home) are
         // owned by root with 0o755. Switch to the main user only after setup.
-        fs.create_dir_all(&home);
+        let _ = fs.create_dir_all(&home);
         // Chown the home directory to the main user
         fs.chown(&home, main_uid, main_gid).unwrap_or(());
 
@@ -139,18 +143,18 @@ impl Shell {
 
             // Ensure parent directories exist
             if let Some(parent) = MemFs::parent(&full) {
-                fs.create_dir_all(parent);
+                let _ = fs.create_dir_all(parent);
             }
 
             match spec {
                 FileSpec::Content(content) => {
-                    fs.write(&full, content.as_bytes());
+                    let _ = fs.write(&full, content.as_bytes());
                 }
                 FileSpec::WithMode { content, mode } => {
                     // User provides mode as "octal-looking" decimal (e.g., 755).
                     // Convert: 755 decimal → parse digits as octal → 0o755.
                     let octal = parse_mode_digits(*mode);
-                    fs.write_with_mode(&full, content.as_bytes(), octal);
+                    let _ = fs.write_with_mode(&full, content.as_bytes(), octal);
                 }
             };
         }
@@ -270,7 +274,7 @@ impl Shell {
 
     /// Create directory and all parents
     pub fn mkdir_p(&mut self, abs_path: &str) {
-        self.fs.create_dir_all(abs_path);
+        let _ = self.fs.create_dir_all(abs_path);
     }
 
     /// Build an output entry
@@ -419,11 +423,11 @@ impl Shell {
             }
             match redir.typ {
                 crate::parser::RedirectType::Overwrite => {
-                    self.fs.write(&target, output.as_bytes());
+                    let _ = self.fs.write(&target, output.as_bytes());
                 }
                 crate::parser::RedirectType::Append => {
                     if !self.fs.exists(&target) {
-                        self.fs.write(&target, output.as_bytes());
+                        let _ = self.fs.write(&target, output.as_bytes());
                     } else {
                         let needs_newline = self.fs.read(&target).is_ok_and(|b| !b.is_empty());
                         if needs_newline {

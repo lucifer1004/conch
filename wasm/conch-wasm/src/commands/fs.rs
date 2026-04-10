@@ -174,7 +174,12 @@ impl Shell {
                 continue;
             }
             let path = self.resolve(arg);
-            self.fs.touch(&path);
+            if self.fs.touch(&path).is_err() {
+                return (
+                    format!("touch: cannot touch '{}': No such file or directory", arg),
+                    1,
+                );
+            }
         }
         (String::new(), 0)
     }
@@ -246,7 +251,9 @@ impl Shell {
             }
             _ => dst_path,
         };
-        self.fs.write(&target, content.as_bytes());
+        if let Err(e) = self.fs.write(&target, content.as_bytes()) {
+            return (format!("cp: cannot create '{}': {}", files[1], e), 1);
+        }
         (String::new(), 0)
     }
 
@@ -364,7 +371,9 @@ impl Shell {
             }
             if append {
                 if !self.fs.exists(&path) {
-                    self.fs.write(&path, input.as_bytes());
+                    if let Err(e) = self.fs.write(&path, input.as_bytes()) {
+                        return (format!("tee: {}: {}", f, e), 1);
+                    }
                 } else {
                     let needs_newline = self.fs.read(&path).is_ok_and(|b| !b.is_empty());
                     if needs_newline {
@@ -373,7 +382,9 @@ impl Shell {
                     let _ = self.fs.append(&path, input.as_bytes());
                 }
             } else {
-                self.fs.write(&path, input.as_bytes());
+                if let Err(e) = self.fs.write(&path, input.as_bytes()) {
+                    return (format!("tee: {}: {}", f, e), 1);
+                }
             }
         }
 
@@ -459,16 +470,16 @@ impl Shell {
         }
 
         // Ensure /tmp exists
-        self.fs.create_dir_all("/tmp");
+        let _ = self.fs.create_dir_all("/tmp");
 
         // Generate a unique name using a simple counter approach
         let name = self.generate_tmpname();
         let path = format!("/tmp/{}", name);
 
         if make_dir {
-            self.fs.create_dir_all(&path);
+            let _ = self.fs.create_dir_all(&path);
         } else {
-            self.fs.write(&path, b"" as &[u8]);
+            let _ = self.fs.write(&path, b"" as &[u8]);
         }
 
         (path, 0)

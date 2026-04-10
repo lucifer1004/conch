@@ -18,10 +18,10 @@ fn default_has_root() {
 // -- exists / is_file / is_dir / get ------------------------------------
 
 #[test]
-fn exists_and_type_checks() {
+fn exists_and_type_checks() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/f.txt", "".to_string());
-    fs.create_dir_all("/d");
+    fs.write("/f.txt", "".to_string())?;
+    fs.create_dir_all("/d")?;
 
     assert!(fs.exists("/f.txt"));
     assert!(fs.exists("/d"));
@@ -30,28 +30,31 @@ fn exists_and_type_checks() {
     assert!(!fs.is_file("/d"));
     assert!(fs.is_dir("/d"));
     assert!(!fs.is_dir("/f.txt"));
+    Ok(())
 }
 
 #[test]
-fn get_returns_entry_ref() {
+fn get_returns_entry_ref() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/f.txt", "data".to_string());
+    fs.write("/f.txt", "data".to_string())?;
     let e = fs.get("/f.txt").unwrap();
     assert!(e.is_file());
     assert_eq!(e.content_str(), Some("data"));
     assert!(fs.get("/missing").is_none());
+    Ok(())
 }
 
 // -- metadata -----------------------------------------------------------
 
 #[test]
-fn metadata_file() {
+fn metadata_file() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write_with_mode("/f.txt", "hello", 0o755);
+    fs.write_with_mode("/f.txt", "hello", 0o755)?;
     let m = fs.metadata("/f.txt").unwrap();
     assert!(m.is_file());
     assert_eq!(m.len(), 5);
     assert_eq!(m.mode(), 0o755);
+    Ok(())
 }
 
 #[test]
@@ -71,14 +74,15 @@ fn metadata_not_found() {
 // -- read_dir -----------------------------------------------------------
 
 #[test]
-fn read_dir_sorted() {
+fn read_dir_sorted() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/c.txt", "".to_string());
-    fs.write("/a.txt", "".to_string());
-    fs.write("/b.txt", "".to_string());
+    fs.write("/c.txt", "".to_string())?;
+    fs.write("/a.txt", "".to_string())?;
+    fs.write("/b.txt", "".to_string())?;
     let entries = fs.read_dir("/").unwrap();
     let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
     assert_eq!(names, &["a.txt", "b.txt", "c.txt"]);
+    Ok(())
 }
 
 #[test]
@@ -88,55 +92,60 @@ fn read_dir_not_found() {
 }
 
 #[test]
-fn read_dir_on_file() {
+fn read_dir_on_file() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/f.txt", "x".to_string());
+    fs.write("/f.txt", "x".to_string())?;
     assert_eq!(
         fs.read_dir("/f.txt"),
         Err(VfsErrorKind::NotADirectory.into())
     );
+    Ok(())
 }
 
 #[test]
-fn read_dir_empty() {
+fn read_dir_empty() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir_all("/empty");
+    fs.create_dir_all("/empty")?;
     assert!(fs.read_dir("/empty").unwrap().is_empty());
+    Ok(())
 }
 
 #[test]
-fn read_dir_skips_nested() {
+fn read_dir_skips_nested() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir_all("/a/b/c");
-    fs.write("/a/b/c/f.txt", "x".to_string());
+    fs.create_dir_all("/a/b/c")?;
+    fs.write("/a/b/c/f.txt", "x".to_string())?;
     let entries = fs.read_dir("/a").unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].name, "b");
+    Ok(())
 }
 
 #[test]
-fn read_dir_mixed_entries() {
+fn read_dir_mixed_entries() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/file.txt", "".to_string());
-    fs.create_dir_all("/dir");
+    fs.write("/file.txt", "".to_string())?;
+    fs.create_dir_all("/dir")?;
     let entries = fs.read_dir("/").unwrap();
     let file_e = entries.iter().find(|e| e.name == "file.txt").unwrap();
     let dir_e = entries.iter().find(|e| e.name == "dir").unwrap();
     assert!(!file_e.is_dir);
     assert!(dir_e.is_dir);
+    Ok(())
 }
 
 // -- iter / paths -------------------------------------------------------
 
 #[test]
-fn iter_all_entries() {
+fn iter_all_entries() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir_all("/a");
-    fs.write("/a/f.txt", "x".to_string());
+    fs.create_dir_all("/a")?;
+    fs.write("/a/f.txt", "x".to_string())?;
     let paths = fs.paths();
     assert!(paths.contains(&"/".to_string()));
     assert!(paths.contains(&"/a".to_string()));
     assert!(paths.contains(&"/a/f.txt".to_string()));
+    Ok(())
 }
 
 // -- is_empty_dir tests -------------------------------------------------
@@ -149,17 +158,19 @@ fn is_empty_dir_empty() {
 }
 
 #[test]
-fn is_empty_dir_non_empty() {
+fn is_empty_dir_non_empty() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir_all("/d/sub");
+    fs.create_dir_all("/d/sub")?;
     assert!(!fs.is_empty_dir("/d"));
+    Ok(())
 }
 
 #[test]
-fn is_empty_dir_file() {
+fn is_empty_dir_file() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.write("/f", "x");
+    fs.write("/f", "x")?;
     assert!(!fs.is_empty_dir("/f"));
+    Ok(())
 }
 
 #[test]
@@ -184,15 +195,16 @@ fn display_empty_fs() {
 }
 
 #[test]
-fn display_nested_tree() {
+fn display_nested_tree() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir_all("/a/b");
-    fs.write("/a/b/f.txt", "x");
-    fs.write("/z.txt", "y");
+    fs.create_dir_all("/a/b")?;
+    fs.write("/a/b/f.txt", "x")?;
+    fs.write("/z.txt", "y")?;
     let out = alloc::format!("{}", fs);
     assert!(out.contains("a/"));
     assert!(out.contains("b/"));
     assert!(out.contains("f.txt"));
     assert!(out.contains("z.txt"));
     assert!(out.contains("├── ") || out.contains("└── "));
+    Ok(())
 }

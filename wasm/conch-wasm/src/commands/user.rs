@@ -65,8 +65,12 @@ impl Shell {
             (None, None) => self.users.add_user(&name, &home),
         };
 
-        // Create home directory with correct ownership
-        self.fs.create_dir_all(&home);
+        // Create home directory with correct ownership.
+        // Temporarily run as root so we can write to /home (owned by root).
+        let saved_uid = self.fs.current_uid();
+        let saved_gid = self.fs.current_gid();
+        self.fs.set_current_user(0, 0);
+        let _ = self.fs.create_dir_all(&home);
         let _ = self.fs.chown(
             &home,
             uid,
@@ -75,6 +79,7 @@ impl Shell {
                 .map(|u| u.gid)
                 .unwrap_or(uid),
         );
+        self.fs.set_current_user(saved_uid, saved_gid);
 
         (String::new(), 0)
     }
@@ -141,7 +146,12 @@ impl Shell {
         };
 
         if remove_home {
+            // Temporarily run as root to remove home dir from /home (owned by root).
+            let saved_uid = self.fs.current_uid();
+            let saved_gid = self.fs.current_gid();
+            self.fs.set_current_user(0, 0);
             let _ = self.fs.remove_dir_all(&entry.home);
+            self.fs.set_current_user(saved_uid, saved_gid);
         }
 
         (String::new(), 0)
