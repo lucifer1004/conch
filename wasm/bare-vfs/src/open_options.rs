@@ -140,7 +140,11 @@ impl OpenOptions {
             }
         };
 
-        let mut handle = FileHandle::new(content);
+        let mut handle = if self.write || self.append {
+            FileHandle::new_writable(content)
+        } else {
+            FileHandle::new(content)
+        };
 
         // append: seek to end
         if self.append {

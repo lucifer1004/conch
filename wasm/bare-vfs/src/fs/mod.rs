@@ -583,6 +583,10 @@ impl MemFs {
         if path == "/" {
             return None;
         }
+        // Check write permission on parent directory
+        if !self.check_parent_write(path) {
+            return None;
+        }
         let path_str = path.to_string();
         let (children, name) = self.traverse_parent_mut(&path_str)?;
         let ino = children.remove(&name)?;
@@ -599,6 +603,10 @@ impl MemFs {
         let parent = crate::parent(link_path).unwrap_or("/");
         if !self.is_dir(parent) {
             return Err(VfsError::from(VfsErrorKind::NotFound));
+        }
+        // Check write permission on the parent directory
+        if !self.check_parent_write(link_path) {
+            return Err(VfsErrorKind::PermissionDenied.into());
         }
         // Check if the name already exists (using nofollow so we detect symlinks too)
         if self.traverse_nofollow(link_path).is_ok() {
@@ -631,6 +639,25 @@ impl MemFs {
         Ok(())
     }
 
+    /// Check whether the current user has write permission on the parent
+    /// directory of `path`. Returns `false` if the parent does not exist.
+    fn check_parent_write(&self, path: &str) -> bool {
+        let normalized = crate::normalize(path);
+        let components = crate::path::split_path(&normalized);
+        if components.is_empty() {
+            return false; // root has no parent
+        }
+        let parent_path = if components.len() == 1 {
+            "/".to_string()
+        } else {
+            alloc::format!("/{}", components[..components.len() - 1].join("/"))
+        };
+        match self.traverse(&parent_path) {
+            Ok((_, inode)) => self.check_permission(inode, 2),
+            Err(_) => false,
+        }
+    }
+
     /// Write a file with default permissions (`0o644`), masked by umask.
     ///
     /// If the path already points to an existing file inode, the content is
@@ -642,6 +669,14 @@ impl MemFs {
 
         // Try to update existing file inode in-place (preserves hard links)
         if let Ok((ino, _)) = self.traverse(path) {
+            if let Some(inode) = self.inodes.get(&ino) {
+                if matches!(inode.kind, InodeKind::File { .. }) {
+                    // Check write permission on the existing inode
+                    if !self.check_permission(inode, 2) {
+                        return;
+                    }
+                }
+            }
             if let Some(inode) = self.inodes.get_mut(&ino) {
                 if let InodeKind::File { content: ref mut c } = inode.kind {
                     *c = content;
@@ -654,6 +689,10 @@ impl MemFs {
         }
 
         // File doesn't exist or path points to dir/symlink — create new inode
+        // Check parent directory write permission first
+        if !self.check_parent_write(path) {
+            return;
+        }
         let ino = self.alloc_ino();
         let uid = self.current_uid;
         let gid = self.current_gid;
@@ -692,6 +731,14 @@ impl MemFs {
 
         // Try to update existing file inode in-place (preserves hard links)
         if let Ok((ino, _)) = self.traverse(path) {
+            if let Some(inode) = self.inodes.get(&ino) {
+                if matches!(inode.kind, InodeKind::File { .. }) {
+                    // Check write permission on the existing inode
+                    if !self.check_permission(inode, 2) {
+                        return;
+                    }
+                }
+            }
             if let Some(inode) = self.inodes.get_mut(&ino) {
                 if let InodeKind::File { content: ref mut c } = inode.kind {
                     *c = content;
@@ -705,6 +752,10 @@ impl MemFs {
         }
 
         // File doesn't exist or path points to dir/symlink — create new inode
+        // Check parent directory write permission first
+        if !self.check_parent_write(path) {
+            return;
+        }
         let ino = self.alloc_ino();
         let uid = self.current_uid;
         let gid = self.current_gid;
@@ -772,6 +823,10 @@ impl MemFs {
         let parent = crate::parent(path).unwrap_or("/");
         if !self.is_dir(parent) {
             return Err(VfsError::from(VfsErrorKind::NotFound));
+        }
+        // Check write permission on parent directory
+        if !self.check_parent_write(path) {
+            return Err(VfsErrorKind::PermissionDenied.into());
         }
         let now = self.tick();
         let dir_mode = self.effective_mode(0o755);
@@ -853,6 +908,10 @@ impl MemFs {
                 inode.mtime = now;
                 inode.atime = now;
             }
+            return;
+        }
+        // Check parent directory write permission before creating new file
+        if !self.check_parent_write(path) {
             return;
         }
         let uid = self.current_uid;
@@ -988,6 +1047,10 @@ impl MemFs {
         if !self.is_dir(dst_parent) {
             return Err(VfsErrorKind::NotFound.into());
         }
+        // Check write permission on destination parent directory
+        if !self.check_parent_write(dst) {
+            return Err(VfsErrorKind::PermissionDenied.into());
+        }
 
         let now = self.tick();
         let ino = self.alloc_ino();
@@ -1065,6 +1128,15 @@ impl MemFs {
             return Err(VfsError::from(VfsErrorKind::PermissionDenied));
         }
 
+        // Check write permission on source parent directory
+        if !self.check_parent_write(src) {
+            return Err(VfsErrorKind::PermissionDenied.into());
+        }
+        // Check write permission on destination parent directory
+        if !self.check_parent_write(dst) {
+            return Err(VfsErrorKind::PermissionDenied.into());
+        }
+
         // Verify destination parent exists BEFORE removing from source
         let dst_normalized = crate::normalize(dst);
         let dst_components = split_path(&dst_normalized);
@@ -1108,6 +1180,10 @@ impl MemFs {
         }
         if self.exists(dst) {
             return Err(VfsErrorKind::AlreadyExists.into());
+        }
+        // Check write permission on destination parent directory
+        if !self.check_parent_write(dst) {
+            return Err(VfsErrorKind::PermissionDenied.into());
         }
         let now = self.tick();
         // Insert into parent directory

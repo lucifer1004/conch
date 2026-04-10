@@ -265,7 +265,15 @@ impl<'de> Deserialize<'de> for MemFs {
             }
         }
 
-        let mut fs = MemFs::from_raw_parts(
+        // Validate root_ino before constructing MemFs
+        let root_inode = inodes
+            .get(&snapshot.root_ino)
+            .ok_or_else(|| serde::de::Error::custom("root inode missing from inode table"))?;
+        if !root_inode.is_dir() {
+            return Err(serde::de::Error::custom("root inode is not a directory"));
+        }
+
+        let fs = MemFs::from_raw_parts(
             inodes,
             snapshot.next_ino,
             snapshot.root_ino,
@@ -275,7 +283,6 @@ impl<'de> Deserialize<'de> for MemFs {
             snapshot.time,
             snapshot.umask,
         );
-        let _ = &mut fs; // suppress unused-mut if needed
 
         Ok(fs)
     }

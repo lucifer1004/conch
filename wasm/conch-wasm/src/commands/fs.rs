@@ -155,9 +155,9 @@ impl Shell {
                     .rsplit_once('/')
                     .map(|(p, _)| if p.is_empty() { "/" } else { p })
                     .unwrap_or("/");
-                match self.fs.get(parent) {
-                    Some(e) if e.is_dir() => {}
-                    _ => {
+                match self.fs.create_dir(&path) {
+                    Ok(()) => {}
+                    Err(_) => {
                         return (
                             format!(
                                 "mkdir: cannot create directory '{}': No such file or directory",
@@ -166,8 +166,7 @@ impl Shell {
                             1,
                         )
                     }
-                }
-                self.fs.insert(path, FsEntry::dir());
+                };
             }
         }
         (String::new(), 0)
@@ -460,9 +459,9 @@ impl Shell {
         let path = format!("/tmp/{}", name);
 
         if make_dir {
-            self.fs.insert(path.clone(), FsEntry::dir());
+            self.fs.create_dir_all(&path);
         } else {
-            self.fs.insert(path.clone(), FsEntry::file(String::new()));
+            self.fs.write(&path, b"" as &[u8]);
         }
 
         (path, 0)

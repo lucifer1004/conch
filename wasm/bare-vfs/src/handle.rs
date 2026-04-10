@@ -20,13 +20,27 @@ use crate::fs::MemFs;
 #[derive(Debug)]
 pub struct FileHandle {
     cursor: Cursor<Vec<u8>>,
+    writable: bool,
 }
 
 impl FileHandle {
     pub(crate) fn new(content: Vec<u8>) -> Self {
         FileHandle {
             cursor: Cursor::new(content),
+            writable: false,
         }
+    }
+
+    pub(crate) fn new_writable(content: Vec<u8>) -> Self {
+        FileHandle {
+            cursor: Cursor::new(content),
+            writable: true,
+        }
+    }
+
+    /// Returns `true` if this handle was opened for writing.
+    pub fn is_writable(&self) -> bool {
+        self.writable
     }
 
     /// Consume the handle and return the underlying byte buffer.
@@ -64,6 +78,12 @@ impl Seek for FileHandle {
 
 impl Write for FileHandle {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if !self.writable {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "handle not opened for writing",
+            ));
+        }
         self.cursor.write(buf)
     }
 
@@ -99,8 +119,12 @@ impl MemFs {
 
     /// Persist the contents of a [`FileHandle`] back to the filesystem,
     /// overwriting the file at `path`.
+    ///
+    /// This is a no-op if the handle was not opened for writing.
     pub fn commit(&mut self, path: &str, handle: FileHandle) {
-        self.write(path, handle.into_inner());
+        if handle.writable {
+            self.write(path, handle.into_inner());
+        }
     }
 }
 
@@ -185,7 +209,11 @@ mod tests {
     fn write_and_commit() {
         let mut fs = MemFs::new();
         fs.write("/f.txt", "hello");
-        let mut h = fs.open("/f.txt").unwrap();
+        let mut h = crate::open_options::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&mut fs, "/f.txt")
+            .unwrap();
         // Seek to end and append
         h.seek(SeekFrom::End(0)).unwrap();
         h.write_all(b" world").unwrap();
@@ -197,7 +225,11 @@ mod tests {
     fn write_at_position() {
         let mut fs = MemFs::new();
         fs.write("/f.txt", "hello");
-        let mut h = fs.open("/f.txt").unwrap();
+        let mut h = crate::open_options::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&mut fs, "/f.txt")
+            .unwrap();
         h.seek(SeekFrom::Start(1)).unwrap();
         h.write_all(b"a").unwrap();
         fs.commit("/f.txt", h);
@@ -208,7 +240,11 @@ mod tests {
     fn write_extends_buffer() {
         let mut fs = MemFs::new();
         fs.write("/f.txt", "hi");
-        let mut h = fs.open("/f.txt").unwrap();
+        let mut h = crate::open_options::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&mut fs, "/f.txt")
+            .unwrap();
         h.seek(SeekFrom::End(0)).unwrap();
         h.write_all(b"!!").unwrap();
         assert_eq!(h.len(), 4);
@@ -220,7 +256,12 @@ mod tests {
     fn commit_to_different_path() {
         let mut fs = MemFs::new();
         fs.write("/src.txt", "original");
-        let h = fs.open("/src.txt").unwrap();
+        // commit on a read-only handle is a no-op; use write handle for real commit
+        let h = crate::open_options::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&mut fs, "/src.txt")
+            .unwrap();
         fs.commit("/dst.txt", h);
         assert_eq!(fs.read_to_string("/dst.txt").unwrap(), "original");
         assert_eq!(fs.read_to_string("/src.txt").unwrap(), "original");

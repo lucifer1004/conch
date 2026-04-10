@@ -111,11 +111,14 @@ impl Shell {
             }
         }
 
-        // Set current user
-        fs.set_current_user(main_uid, main_gid);
-
-        // Create home hierarchy (root `/` is created by MemFs::new)
+        // Create home hierarchy as root so intermediate dirs (e.g. /home) are
+        // owned by root with 0o755. Switch to the main user only after setup.
         fs.create_dir_all(&home);
+        // Chown the home directory to the main user
+        fs.chown(&home, main_uid, main_gid).unwrap_or(());
+
+        // Switch to the main user so that user-provided files are owned by them
+        fs.set_current_user(main_uid, main_gid);
 
         // Resolve files to populate
         let empty_files: BTreeMap<String, FileSpec> = BTreeMap::new();
@@ -125,7 +128,7 @@ impl Shell {
             config.files.as_ref().unwrap_or(&empty_files)
         };
 
-        // Populate user-provided files
+        // Populate user-provided files as the main user so they have correct ownership
         for (file_path, spec) in files {
             let full = if file_path.starts_with('/') {
                 file_path.clone()

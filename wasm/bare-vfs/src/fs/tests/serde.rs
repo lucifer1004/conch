@@ -94,3 +94,26 @@ fn roundtrip_supplementary_gids() {
 
     assert_eq!(fs2.supplementary_gids(), &[100u32, 200u32]);
 }
+
+// -- Security fix 4: Serde deserialization validates root_ino ----------------
+
+#[test]
+fn deserialize_invalid_root_ino_fails() {
+    // root_ino=999 is not present in the inode table
+    let json = r#"{"inodes":[],"paths":[],"next_ino":10,"root_ino":999,"current_uid":0,"current_gid":0,"supplementary_gids":[],"time":0,"umask":18}"#;
+    let result: Result<MemFs, _> = serde_json::from_str(json);
+    assert!(result.is_err());
+}
+
+#[test]
+fn deserialize_root_ino_pointing_to_file_fails() {
+    // Construct a snapshot where root_ino points to a File inode, not a Dir
+    let mut fs = MemFs::new();
+    fs.write("/f", "data");
+    let mut snap: serde_json::Value = serde_json::to_value(&fs).unwrap();
+    // Find the inode number of /f and set root_ino to it
+    let file_ino = fs.metadata("/f").unwrap().ino();
+    snap["root_ino"] = serde_json::json!(file_ino);
+    let result: Result<MemFs, _> = serde_json::from_value(snap);
+    assert!(result.is_err());
+}

@@ -1,5 +1,7 @@
 use super::*;
 use crate::error::VfsErrorKind;
+#[cfg(feature = "std")]
+use std::io::Write as _;
 
 // -- uid/gid tests -------------------------------------------------------
 
@@ -135,6 +137,8 @@ fn supplementary_gids() {
 #[test]
 fn new_files_inherit_current_user() {
     let mut fs = MemFs::new();
+    // Make root world-writable so non-root user can create files in it
+    fs.set_mode("/", 0o777).unwrap();
     fs.set_current_user(1000, 2000);
 
     fs.write("/f.txt", "data");
@@ -162,6 +166,8 @@ fn new_files_inherit_current_user() {
 #[test]
 fn entryref_has_uid_gid() {
     let mut fs = MemFs::new();
+    // Make root world-writable so non-root user can create files in it
+    fs.set_mode("/", 0o777).unwrap();
     fs.set_current_user(42, 99);
     fs.write("/f.txt", "hello");
     let e = fs.get("/f.txt").unwrap();
@@ -511,4 +517,112 @@ fn create_dir_all_follows_symlinks() {
         fs.is_dir("/link/sub/deep"),
         "/link/sub/deep should be accessible through symlink"
     );
+}
+
+// -- Security fix 1: write()/write_with_mode() respect file write permission -
+
+#[test]
+fn write_respects_file_permission() {
+    let mut fs = MemFs::new();
+    fs.write("/f", "original");
+    fs.chown("/f", 1000, 1000).unwrap();
+    fs.set_mode("/f", 0o444).unwrap(); // read-only
+    fs.set_current_user(2000, 2000); // different non-root user
+    fs.write("/f", "hacked");
+    assert_eq!(fs.read_to_string("/f").unwrap(), "original"); // unchanged
+}
+
+#[test]
+fn write_with_mode_respects_file_permission() {
+    let mut fs = MemFs::new();
+    fs.write_with_mode("/f", "original", 0o444);
+    fs.chown("/f", 1000, 1000).unwrap();
+    fs.set_current_user(2000, 2000);
+    fs.write_with_mode("/f", "hacked", 0o644);
+    assert_eq!(fs.read_to_string("/f").unwrap(), "original"); // unchanged
+}
+
+#[test]
+fn write_root_bypasses_file_permission() {
+    let mut fs = MemFs::new();
+    fs.write_with_mode("/f", "original", 0o444);
+    // uid=0 (root) can still overwrite
+    fs.write("/f", "updated");
+    assert_eq!(fs.read_to_string("/f").unwrap(), "updated");
+}
+
+// -- Security fix 2: parent directory write permission enforced --------------
+
+#[test]
+fn cannot_create_file_in_readonly_dir() {
+    let mut fs = MemFs::new();
+    fs.create_dir("/d").unwrap();
+    fs.set_mode("/d", 0o555).unwrap(); // read+exec, no write
+    fs.set_current_user(1000, 1000);
+    fs.write("/d/newfile", "data");
+    assert!(!fs.exists("/d/newfile")); // creation should fail
+}
+
+#[test]
+fn cannot_remove_from_readonly_dir() {
+    let mut fs = MemFs::new();
+    fs.create_dir("/d").unwrap();
+    fs.write("/d/f", "data");
+    fs.set_mode("/d", 0o555).unwrap();
+    fs.set_current_user(1000, 1000);
+    assert!(fs.remove("/d/f").is_none()); // should fail
+    assert!(fs.exists("/d/f")); // still there
+}
+
+#[test]
+fn cannot_symlink_in_readonly_dir() {
+    let mut fs = MemFs::new();
+    fs.create_dir("/d").unwrap();
+    fs.set_mode("/d", 0o555).unwrap();
+    fs.set_current_user(1000, 1000);
+    assert!(fs.symlink("/target", "/d/link").is_err());
+}
+
+#[test]
+fn root_bypasses_parent_dir_write_check() {
+    let mut fs = MemFs::new();
+    fs.create_dir("/d").unwrap();
+    fs.set_mode("/d", 0o555).unwrap();
+    // uid=0 (root) should still be able to write
+    fs.write("/d/f", "data");
+    assert!(fs.exists("/d/f"));
+}
+
+// -- Security fix 3: FileHandle Write respects access mode -------------------
+
+#[test]
+fn read_only_handle_rejects_write() {
+    let mut fs = MemFs::new();
+    fs.write("/f", "data");
+    let mut handle = fs.open("/f").unwrap();
+    let result = handle.write(b"nope");
+    assert!(result.is_err());
+}
+
+#[test]
+fn writable_handle_accepts_write() {
+    let mut fs = MemFs::new();
+    fs.write("/f", "data");
+    let mut handle = crate::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&mut fs, "/f")
+        .unwrap();
+    assert!(handle.write(b"ok").is_ok());
+}
+
+#[test]
+fn commit_on_readonly_handle_is_noop() {
+    let mut fs = MemFs::new();
+    fs.write("/f", "original");
+    let handle = fs.open("/f").unwrap();
+    assert!(!handle.is_writable());
+    // commit should be a no-op — content should not change
+    fs.commit("/f", handle);
+    assert_eq!(fs.read_to_string("/f").unwrap(), "original");
 }
