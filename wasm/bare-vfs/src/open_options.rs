@@ -107,14 +107,40 @@ impl OpenOptions {
             return Err(VfsErrorKind::IsADirectory.into());
         }
 
-        // truncate: clear content
+        // Check read permission if read access requested
+        if self.read {
+            // fs.read() already checks read permission
+        }
+
+        // Check write permission if write/append access requested
+        if self.write || self.append {
+            let (_, inode) = fs.traverse(path)?;
+            if !fs.check_permission(inode, 2) {
+                return Err(VfsErrorKind::PermissionDenied.into());
+            }
+        }
+
+        // truncate: clear content (requires write, permission already checked above)
         if self.truncate && self.write {
             fs.truncate(path, 0)?;
         }
 
-        // Read the content into a handle
-        let bytes = fs.read(path)?;
-        let mut handle = FileHandle::new(bytes.to_vec());
+        // Load file content into handle.
+        // If read access is requested, use fs.read() which enforces read permission.
+        // If write-only (no read), get content bypassing read permission check.
+        let content = if self.read {
+            fs.read(path)?.to_vec()
+        } else {
+            // write-only or append-only: get raw content without read permission check
+            let (_, inode) = fs.traverse(path)?;
+            match &inode.kind {
+                crate::fs::InodeKind::File { content } => content.clone(),
+                crate::fs::InodeKind::Dir { .. } => return Err(VfsErrorKind::IsADirectory.into()),
+                crate::fs::InodeKind::Symlink { .. } => return Err(VfsErrorKind::NotFound.into()),
+            }
+        };
+
+        let mut handle = FileHandle::new(content);
 
         // append: seek to end
         if self.append {

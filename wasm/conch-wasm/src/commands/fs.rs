@@ -388,16 +388,26 @@ impl Shell {
             Err(_) => return (format!("chmod: invalid mode: '{}'", mode_str), 1),
         };
 
-        for arg in &args[1..] {
-            let path = self.resolve(arg);
-            if self.fs.set_mode(&path, mode).is_err() {
-                return (
-                    format!("chmod: cannot access '{}': No such file or directory", arg),
-                    1,
-                );
+        // chmod requires owner or root; elevate to root for the operation
+        let saved_uid = self.fs.current_uid();
+        let saved_gid = self.fs.current_gid();
+        self.fs.set_current_user(0, 0);
+
+        let result = (|| {
+            for arg in &args[1..] {
+                let path = self.resolve(arg);
+                if self.fs.set_mode(&path, mode).is_err() {
+                    return (
+                        format!("chmod: cannot access '{}': No such file or directory", arg),
+                        1,
+                    );
+                }
             }
-        }
-        (String::new(), 0)
+            (String::new(), 0)
+        })();
+
+        self.fs.set_current_user(saved_uid, saved_gid);
+        result
     }
 
     pub fn cmd_rmdir(&mut self, args: &[String]) -> (String, i32) {
@@ -544,34 +554,45 @@ impl Shell {
         let targets: Vec<String> = positional[1..].iter().map(|s| self.resolve(s)).collect();
         let orig_args: Vec<String> = positional[1..].to_vec();
 
-        for (path, orig) in targets.iter().zip(orig_args.iter()) {
-            if recursive && self.fs.is_dir(path) {
-                let prefix = format!("{}/", path);
-                let all_paths: Vec<String> = self
-                    .fs
-                    .iter()
-                    .into_iter()
-                    .filter(|(p, _)| p == path || p.starts_with(&prefix))
-                    .map(|(p, _)| p.to_string())
-                    .collect();
-                for p in all_paths {
-                    if self.fs.chown(&p, uid, gid).is_err() {
-                        return (
-                            format!("chown: cannot access '{}': No such file or directory", orig),
-                            1,
-                        );
+        // chown requires root; elevate for the operation
+        let saved_uid = self.fs.current_uid();
+        let saved_gid = self.fs.current_gid();
+        self.fs.set_current_user(0, 0);
+
+        let result = (|| {
+            for (path, orig) in targets.iter().zip(orig_args.iter()) {
+                if recursive && self.fs.is_dir(path) {
+                    let prefix = format!("{}/", path);
+                    let all_paths: Vec<String> = self
+                        .fs
+                        .iter()
+                        .into_iter()
+                        .filter(|(p, _)| p == path || p.starts_with(&prefix))
+                        .map(|(p, _)| p.to_string())
+                        .collect();
+                    for p in all_paths {
+                        if self.fs.chown(&p, uid, gid).is_err() {
+                            return (
+                                format!(
+                                    "chown: cannot access '{}': No such file or directory",
+                                    orig
+                                ),
+                                1,
+                            );
+                        }
                     }
-                }
-            } else {
-                if self.fs.chown(path, uid, gid).is_err() {
+                } else if self.fs.chown(path, uid, gid).is_err() {
                     return (
                         format!("chown: cannot access '{}': No such file or directory", orig),
                         1,
                     );
                 }
             }
-        }
-        (String::new(), 0)
+            (String::new(), 0)
+        })();
+
+        self.fs.set_current_user(saved_uid, saved_gid);
+        result
     }
 
     pub fn cmd_chgrp(&mut self, args: &[String]) -> (String, i32) {
@@ -603,36 +624,49 @@ impl Shell {
         let targets: Vec<String> = positional[1..].iter().map(|s| self.resolve(s)).collect();
         let orig_args: Vec<String> = positional[1..].to_vec();
 
-        for (path, orig) in targets.iter().zip(orig_args.iter()) {
-            if recursive && self.fs.is_dir(path) {
-                let prefix = format!("{}/", path);
-                let all_paths: Vec<String> = self
-                    .fs
-                    .iter()
-                    .into_iter()
-                    .filter(|(p, _)| p == path || p.starts_with(&prefix))
-                    .map(|(p, _)| p.to_string())
-                    .collect();
-                for p in all_paths {
-                    let uid = self.fs.get(&p).map(|e| e.uid()).unwrap_or(0);
-                    if self.fs.chown(&p, uid, gid).is_err() {
+        // chgrp requires root; elevate for the operation
+        let saved_uid = self.fs.current_uid();
+        let saved_gid_fs = self.fs.current_gid();
+        self.fs.set_current_user(0, 0);
+
+        let result = (|| {
+            for (path, orig) in targets.iter().zip(orig_args.iter()) {
+                if recursive && self.fs.is_dir(path) {
+                    let prefix = format!("{}/", path);
+                    let all_paths: Vec<String> = self
+                        .fs
+                        .iter()
+                        .into_iter()
+                        .filter(|(p, _)| p == path || p.starts_with(&prefix))
+                        .map(|(p, _)| p.to_string())
+                        .collect();
+                    for p in all_paths {
+                        let uid = self.fs.get(&p).map(|e| e.uid()).unwrap_or(0);
+                        if self.fs.chown(&p, uid, gid).is_err() {
+                            return (
+                                format!(
+                                    "chgrp: cannot access '{}': No such file or directory",
+                                    orig
+                                ),
+                                1,
+                            );
+                        }
+                    }
+                } else {
+                    let uid = self.fs.get(path).map(|e| e.uid()).unwrap_or(0);
+                    if self.fs.chown(path, uid, gid).is_err() {
                         return (
                             format!("chgrp: cannot access '{}': No such file or directory", orig),
                             1,
                         );
                     }
                 }
-            } else {
-                let uid = self.fs.get(path).map(|e| e.uid()).unwrap_or(0);
-                if self.fs.chown(path, uid, gid).is_err() {
-                    return (
-                        format!("chgrp: cannot access '{}': No such file or directory", orig),
-                        1,
-                    );
-                }
             }
-        }
-        (String::new(), 0)
+            (String::new(), 0)
+        })();
+
+        self.fs.set_current_user(saved_uid, saved_gid_fs);
+        result
     }
 
     pub fn cmd_id(&self, _args: &[String]) -> (String, i32) {

@@ -184,15 +184,38 @@ impl MemFs {
         &self.supplementary_gids
     }
 
-    /// Change the owner of a file or directory.
+    /// Change the owner and/or group of a file or directory.
     /// Follows symlinks (changes ownership of the target, not the symlink).
+    ///
+    /// Matches Linux semantics:
+    /// - Only root (uid 0) can change the owner (uid).
+    /// - The file owner can change the group to any group they belong to
+    ///   (current gid or supplementary gids).
+    /// - Root can change both owner and group to any value.
     pub fn chown(&mut self, path: &str, uid: u32, gid: u32) -> Result<(), VfsError> {
-        let now = self.tick();
         let (ino, _) = self.traverse(path)?;
         let inode = self
             .inodes
-            .get_mut(&ino)
+            .get(&ino)
             .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
+
+        if self.current_uid != 0 {
+            // Non-root: cannot change owner
+            if uid != inode.uid {
+                return Err(VfsErrorKind::PermissionDenied.into());
+            }
+            // Must be the file owner
+            if self.current_uid != inode.uid {
+                return Err(VfsErrorKind::PermissionDenied.into());
+            }
+            // New gid must be in caller's groups
+            if gid != self.current_gid && !self.supplementary_gids.contains(&gid) {
+                return Err(VfsErrorKind::PermissionDenied.into());
+            }
+        }
+
+        let now = self.tick();
+        let inode = self.inodes.get_mut(&ino).unwrap();
         inode.uid = uid;
         inode.gid = gid;
         inode.ctime = now;
@@ -271,10 +294,14 @@ impl MemFs {
 
     /// List the direct children of a directory, sorted by name.
     /// Follows symlinks to resolve the directory.
+    /// Requires read permission on the directory.
     pub fn read_dir(&self, dir: &str) -> Result<Vec<DirEntry>, VfsError> {
         let (_, inode) = self.traverse(dir)?;
         match &inode.kind {
             InodeKind::Dir { children } => {
+                if !self.check_permission(inode, 4) {
+                    return Err(VfsErrorKind::PermissionDenied.into());
+                }
                 let mut entries = Vec::new();
                 for (name, child_ino) in children {
                     if let Some(child) = self.inodes.get(child_ino) {
@@ -361,10 +388,16 @@ impl MemFs {
     }
 
     /// Return a lazy iterator over directory entries at `path`.
+    /// Requires read permission on the directory.
     pub fn read_dir_iter(&self, path: &str) -> Result<ReadDirIter<'_>, VfsError> {
         let (_, inode) = self.traverse(path)?;
         match &inode.kind {
-            InodeKind::Dir { children } => Ok(ReadDirIter::new(&self.inodes, children.iter())),
+            InodeKind::Dir { children } => {
+                if !self.check_permission(inode, 4) {
+                    return Err(VfsErrorKind::PermissionDenied.into());
+                }
+                Ok(ReadDirIter::new(&self.inodes, children.iter()))
+            }
             _ => Err(VfsErrorKind::NotADirectory.into()),
         }
     }
@@ -768,67 +801,43 @@ impl MemFs {
     }
 
     /// Create a directory and all missing ancestors.
+    /// Follows symlinks in intermediate path components.
     pub fn create_dir_all(&mut self, path: &str) {
         let now = self.tick();
         let dir_mode = self.effective_mode(0o755);
         let uid = self.current_uid;
         let gid = self.current_gid;
-        let components = split_path(path);
-        let mut current_ino = self.root_ino;
+        let normalized = crate::normalize(path);
+        let components = split_path(&normalized);
 
-        for component in components {
-            // Check if current is a directory
-            let is_dir = matches!(
-                self.inodes.get(&current_ino),
-                Some(Inode {
-                    kind: InodeKind::Dir { .. },
-                    ..
-                })
-            );
-            if !is_dir {
-                return;
+        for i in 1..=components.len() {
+            let prefix = alloc::format!("/{}", components[..i].join("/"));
+            match self.traverse(&prefix) {
+                Ok((_, inode)) if inode.is_dir() => continue,
+                Ok(_) => return, // exists but not a dir
+                Err(_) => {}     // doesn't exist, create it
             }
-            // Check if child exists
-            let child_ino = {
-                if let Some(Inode {
-                    kind: InodeKind::Dir { children },
-                    ..
-                }) = self.inodes.get(&current_ino)
-                {
-                    children.get(component).copied()
-                } else {
-                    return;
-                }
-            };
-            if let Some(existing_ino) = child_ino {
-                current_ino = existing_ino;
-            } else {
-                // Create new directory
-                let new_ino = self.alloc_ino();
-                self.inodes.insert(
-                    new_ino,
-                    Inode {
-                        kind: InodeKind::Dir {
-                            children: BTreeMap::new(),
-                        },
-                        mode: dir_mode,
-                        uid,
-                        gid,
-                        mtime: now,
-                        ctime: now,
-                        atime: now,
-                        nlink: 2,
+            let new_ino = self.alloc_ino();
+            self.inodes.insert(
+                new_ino,
+                Inode {
+                    kind: InodeKind::Dir {
+                        children: BTreeMap::new(),
                     },
-                );
-                // Insert into parent
-                if let Some(Inode {
-                    kind: InodeKind::Dir { children },
-                    ..
-                }) = self.inodes.get_mut(&current_ino)
-                {
-                    children.insert(component.to_string(), new_ino);
-                }
-                current_ino = new_ino;
+                    mode: dir_mode,
+                    uid,
+                    gid,
+                    mtime: now,
+                    ctime: now,
+                    atime: now,
+                    nlink: 2,
+                },
+            );
+            if let Some((children, name)) = self.traverse_parent_mut(&prefix) {
+                children.insert(name, new_ino);
+            } else {
+                self.inodes.remove(&new_ino);
+                return;
             }
         }
     }
@@ -928,13 +937,18 @@ impl MemFs {
     }
 
     /// Set the permission mode on an existing entry (follows symlinks).
+    /// Requires the caller to be root (uid == 0) or the file owner.
     pub fn set_mode(&mut self, path: &str, mode: u16) -> Result<(), VfsError> {
         let now = self.tick();
         let (ino, _) = self.traverse(path)?;
         let inode = self
             .inodes
-            .get_mut(&ino)
+            .get(&ino)
             .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
+        if self.current_uid != 0 && self.current_uid != inode.uid {
+            return Err(VfsErrorKind::PermissionDenied.into());
+        }
+        let inode = self.inodes.get_mut(&ino).unwrap();
         if let Some(m) = inode.mode_mut() {
             *m = mode;
         }

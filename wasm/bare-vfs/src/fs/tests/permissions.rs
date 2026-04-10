@@ -351,3 +351,164 @@ fn format_mode_sticky() {
     assert_eq!(crate::Entry::format_mode(0o1755), "rwxr-xr-t");
     assert_eq!(crate::Entry::format_mode(0o1754), "rwxr-xr-T");
 }
+
+// -- Bug 1: set_mode() and chown() authorization checks --------------------
+
+#[test]
+fn set_mode_requires_owner_or_root() {
+    let mut fs = MemFs::new();
+    fs.write("/f", "data");
+    // As root, change owner to 1000
+    fs.chown("/f", 1000, 1000).unwrap();
+    // As a different user (2000), set_mode should fail
+    fs.set_current_user(2000, 2000);
+    assert_eq!(
+        fs.set_mode("/f", 0o777),
+        Err(VfsErrorKind::PermissionDenied.into())
+    );
+    // As the file owner (1000), set_mode should succeed
+    fs.set_current_user(1000, 1000);
+    assert!(fs.set_mode("/f", 0o777).is_ok());
+}
+
+#[test]
+fn chown_change_uid_requires_root() {
+    let mut fs = MemFs::new();
+    fs.write("/f", "data");
+    // Non-root cannot change owner uid
+    fs.set_current_user(1000, 1000);
+    assert!(fs.chown("/f", 2000, 1000).is_err());
+    // Root can change owner
+    fs.set_current_user(0, 0);
+    assert!(fs.chown("/f", 2000, 2000).is_ok());
+    let m = fs.metadata("/f").unwrap();
+    assert_eq!(m.uid(), 2000);
+    assert_eq!(m.gid(), 2000);
+}
+
+#[test]
+fn chown_owner_can_change_group_to_own_group() {
+    let mut fs = MemFs::new();
+    fs.write("/f", "data");
+    fs.chown("/f", 1000, 1000).unwrap(); // root sets owner
+    fs.set_current_user(1000, 1000);
+    fs.add_supplementary_gid(500);
+    // Owner can change gid to a group they belong to
+    assert!(fs.chown("/f", 1000, 500).is_ok());
+    assert_eq!(fs.metadata("/f").unwrap().gid(), 500);
+    // Owner can change gid to their primary group
+    assert!(fs.chown("/f", 1000, 1000).is_ok());
+}
+
+#[test]
+fn chown_owner_cannot_change_group_to_foreign_group() {
+    let mut fs = MemFs::new();
+    fs.write("/f", "data");
+    fs.chown("/f", 1000, 1000).unwrap();
+    fs.set_current_user(1000, 1000);
+    // Owner cannot change gid to a group they don't belong to
+    assert!(fs.chown("/f", 1000, 9999).is_err());
+}
+
+#[test]
+fn chown_non_owner_cannot_change_group() {
+    let mut fs = MemFs::new();
+    fs.write("/f", "data");
+    fs.chown("/f", 1000, 1000).unwrap();
+    fs.set_current_user(2000, 2000); // different user
+                                     // Not the file owner — cannot change anything
+    assert!(fs.chown("/f", 1000, 2000).is_err());
+}
+
+// -- Bug 3: read_dir() requires read permission on directory ---------------
+
+#[test]
+fn read_dir_requires_read_permission() {
+    let mut fs = MemFs::new();
+    fs.create_dir("/d").unwrap();
+    fs.write("/d/f", "x");
+    // As root, set owner and mode (exec-only, no read)
+    fs.chown("/d", 1000, 1000).unwrap();
+    fs.set_mode("/d", 0o100).unwrap(); // execute only, no read
+                                       // As owner with no read bit, read_dir should fail
+    fs.set_current_user(1000, 1000);
+    assert_eq!(
+        fs.read_dir("/d"),
+        Err(VfsErrorKind::PermissionDenied.into())
+    );
+}
+
+#[test]
+fn read_dir_iter_requires_read_permission() {
+    let mut fs = MemFs::new();
+    fs.create_dir("/d").unwrap();
+    fs.write("/d/f", "x");
+    fs.chown("/d", 1000, 1000).unwrap();
+    fs.set_mode("/d", 0o100).unwrap(); // execute only
+    fs.set_current_user(1000, 1000);
+    assert_eq!(
+        fs.read_dir_iter("/d").map(|_| ()),
+        Err(VfsErrorKind::PermissionDenied.into())
+    );
+}
+
+#[test]
+fn read_dir_root_bypasses_read_permission() {
+    let mut fs = MemFs::new();
+    fs.create_dir("/d").unwrap();
+    fs.write("/d/f", "x");
+    fs.set_mode("/d", 0o000).unwrap(); // no permissions at all
+                                       // root can still read directory
+    assert!(fs.read_dir("/d").is_ok());
+}
+
+// -- Bug 2: OpenOptions write-only open doesn't need read permission -------
+
+#[cfg(feature = "std")]
+#[test]
+fn open_write_only_succeeds_without_read_perm() {
+    use crate::open_options::OpenOptions;
+    let mut fs = MemFs::new();
+    fs.write("/f", "data");
+    // As root, set owner and mode (write-only for owner)
+    fs.chown("/f", 1000, 1000).unwrap();
+    fs.set_mode("/f", 0o200).unwrap(); // write-only for owner
+    fs.set_current_user(1000, 1000);
+    // Write-only open should succeed (no read permission needed)
+    let handle = OpenOptions::new().write(true).open(&mut fs, "/f");
+    assert!(
+        handle.is_ok(),
+        "write-only open should succeed without read perm"
+    );
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn open_read_only_fails_without_read_perm() {
+    use crate::open_options::OpenOptions;
+    let mut fs = MemFs::new();
+    fs.write("/f", "data");
+    fs.chown("/f", 1000, 1000).unwrap();
+    fs.set_mode("/f", 0o200).unwrap(); // write-only
+    fs.set_current_user(1000, 1000);
+    let handle = OpenOptions::new().read(true).open(&mut fs, "/f");
+    assert_eq!(
+        handle.map(|_| ()),
+        Err(VfsErrorKind::PermissionDenied.into())
+    );
+}
+
+// -- Bug 4: create_dir_all() follows symlinks in intermediate components ---
+
+#[test]
+fn create_dir_all_follows_symlinks() {
+    let mut fs = MemFs::new();
+    fs.create_dir("/real").unwrap();
+    fs.symlink("/real", "/link").unwrap();
+    fs.create_dir_all("/link/sub/deep");
+    assert!(fs.is_dir("/real/sub/deep"), "/real/sub/deep should exist");
+    assert!(
+        fs.is_dir("/link/sub/deep"),
+        "/link/sub/deep should be accessible through symlink"
+    );
+}
