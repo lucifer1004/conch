@@ -225,7 +225,15 @@ impl Shell {
             None => return (format!("su: user {} does not exist", uname), 1),
         };
 
-        self.fs.set_current_user(uid, gid);
+        // Install full identity: uid, gid, and supplementary groups
+        let sup_gids: Vec<u32> = self
+            .users
+            .user_groups(&uname)
+            .iter()
+            .map(|g| g.gid)
+            .filter(|&g| g != gid)
+            .collect();
+        self.fs.set_identity(uid, gid, &sup_gids);
         self.user = uname.clone();
         self.env.insert("USER".to_string(), uname.clone());
 
@@ -246,10 +254,11 @@ impl Shell {
 
         let saved_uid = self.fs.current_uid();
         let saved_gid = self.fs.current_gid();
+        let saved_groups: Vec<u32> = self.fs.supplementary_gids().to_vec();
         let saved_user = self.user.clone();
 
-        // Elevate to root
-        self.fs.set_current_user(0, 0);
+        // Elevate to root with full identity switch
+        self.fs.set_identity(0, 0, &[]);
         self.user = "root".to_string();
 
         let cmd = &args[0];
@@ -262,8 +271,8 @@ impl Shell {
 
         let (output, code, _) = self.run_line(&line);
 
-        // Restore
-        self.fs.set_current_user(saved_uid, saved_gid);
+        // Restore full identity
+        self.fs.set_identity(saved_uid, saved_gid, &saved_groups);
         self.user = saved_user;
 
         (output, code)

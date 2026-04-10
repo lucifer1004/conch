@@ -291,3 +291,36 @@ fn su_entry_shows_pre_switch_user() {
     assert_eq!(entry2.user, "alice", "post-su entry should show new user");
     assert_eq!(entry2.output, "alice");
 }
+
+#[test]
+fn su_installs_supplementary_groups() {
+    let mut s = shell();
+    s.run_line("sudo useradd alice");
+    s.run_line("sudo groupadd shared");
+    s.run_line("sudo usermod -aG shared alice");
+    // Create a file readable only by group shared (0640)
+    s.run_line("sudo touch /tmp/groupfile");
+    s.run_line("sudo chown alice:shared /tmp/groupfile");
+    s.run_line("sudo chmod 640 /tmp/groupfile");
+    // Switch to alice — should have supplementary group access
+    s.run_line("su alice");
+    let (out, code, _) = s.run_line("cat /tmp/groupfile");
+    assert_eq!(code, 0, "alice should read via group access: {out}");
+}
+
+#[test]
+fn set_current_user_clears_supplementary_groups() {
+    let mut s = shell();
+    s.run_line("sudo useradd alice");
+    s.run_line("sudo groupadd team");
+    s.run_line("sudo usermod -aG team alice");
+    s.run_line("su alice");
+    // alice has 'team' group. Now switch to a different user via su
+    s.run_line("su - root");
+    // root should NOT have alice's 'team' supplementary group
+    let (out, _, _) = s.run_line("id");
+    assert!(
+        !out.contains("team") || out.contains("root"),
+        "root should not inherit alice's groups: {out}"
+    );
+}

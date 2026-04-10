@@ -159,9 +159,19 @@ impl MemFs {
     }
 
     /// Set the current user identity for permission checks.
+    /// Also clears supplementary groups to prevent privilege leaks.
+    /// Use [`set_identity`] to set supplementary groups at the same time.
     pub fn set_current_user(&mut self, uid: u32, gid: u32) {
         self.current_uid = uid;
         self.current_gid = gid;
+        self.supplementary_gids.clear();
+    }
+
+    /// Set the full user identity: uid, primary gid, and supplementary groups.
+    pub fn set_identity(&mut self, uid: u32, gid: u32, supplementary_gids: &[u32]) {
+        self.current_uid = uid;
+        self.current_gid = gid;
+        self.supplementary_gids = supplementary_gids.to_vec();
     }
 
     /// Add a supplementary group ID for the current user.
