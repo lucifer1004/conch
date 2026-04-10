@@ -299,6 +299,8 @@ impl Shell {
     pub fn cmd_sort(&self, args: &[String], stdin: Option<&str>) -> (String, i32) {
         let mut reverse = false;
         let mut numeric = false;
+        let mut delimiter: Option<char> = None;
+        let mut key_field: Option<usize> = None;
         let mut file = None;
 
         let mut parser = lexopt::Parser::from_args(args.iter().cloned());
@@ -306,6 +308,23 @@ impl Shell {
             match parser.next() {
                 Ok(Some(lexopt::Arg::Short('r'))) => reverse = true,
                 Ok(Some(lexopt::Arg::Short('n'))) => numeric = true,
+                Ok(Some(lexopt::Arg::Short('t'))) => {
+                    if let Ok(val) = parser.value() {
+                        let s = val.to_string_lossy();
+                        delimiter = s.chars().next();
+                    }
+                }
+                Ok(Some(lexopt::Arg::Short('k'))) => {
+                    if let Ok(val) = parser.value() {
+                        let s = val.to_string_lossy();
+                        let field_str = s.split(',').next().unwrap_or(&s);
+                        if let Ok(n) = field_str.parse::<usize>() {
+                            if n > 0 {
+                                key_field = Some(n - 1);
+                            }
+                        }
+                    }
+                }
                 Ok(Some(lexopt::Arg::Value(val))) => file = Some(val.to_string_lossy().to_string()),
                 Ok(Some(_)) => {}
                 Ok(None) | Err(_) => break,
@@ -317,15 +336,31 @@ impl Shell {
             Err(e) => return (format!("sort: {}", e), 1),
         };
 
+        let extract_key = |line: &str| -> String {
+            if let (Some(delim), Some(field)) = (delimiter, key_field) {
+                line.split(delim).nth(field).unwrap_or("").to_string()
+            } else if let Some(field) = key_field {
+                line.split_whitespace().nth(field).unwrap_or("").to_string()
+            } else {
+                line.to_string()
+            }
+        };
+
         let mut lines: Vec<&str> = input.lines().collect();
         if numeric {
             lines.sort_by(|a, b| {
-                let na: f64 = a.trim().parse().unwrap_or(0.0);
-                let nb: f64 = b.trim().parse().unwrap_or(0.0);
+                let ka = extract_key(a);
+                let kb = extract_key(b);
+                let na: f64 = ka.trim().parse().unwrap_or(0.0);
+                let nb: f64 = kb.trim().parse().unwrap_or(0.0);
                 na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
             });
         } else {
-            lines.sort();
+            lines.sort_by(|a, b| {
+                let ka = extract_key(a);
+                let kb = extract_key(b);
+                ka.cmp(&kb)
+            });
         }
         if reverse {
             lines.reverse();

@@ -36,7 +36,7 @@ Typst document
 
 ### Navigation & Environment
 
-`cd`, `pwd`, `env`, `printenv`, `export`, `unset`, `which`, `type`, `hostname`, `whoami`, `date`, `basename`, `dirname`, `realpath`, `sleep`
+`cd`, `pwd`, `env`, `printenv`, `export`, `unset`, `which`, `type`, `hostname`, `whoami`, `date`, `basename`, `dirname`, `realpath`, `sleep`, `history`
 
 ### Scripting
 
@@ -56,6 +56,7 @@ Typst document
 - **Glob expansion**: `*.txt`, `src/*.rs`
 - **Permission model**: Unix uid/gid with owner/group/other rwx enforcement
 - **Syntax highlighting**: language detection for `cat` output
+- **Command history**: `history` builtin; Up/Down arrow navigation in per-char animations
 
 ## Permission Model
 
@@ -95,6 +96,5 @@ cargo test --all-features  # with serde, std
 - `tr` does not support character classes (`[:upper:]`) or ranges (`a-z`)
 - `su`/`sudo` have no authentication — any user can escalate
 - No job control (`bg`, `fg`, `jobs`, `kill`)
-- No command history or arrow-key navigation
 - No heredocs, subshells, or `$()` command substitution
 - `sleep` is a no-op (WASM cannot block)

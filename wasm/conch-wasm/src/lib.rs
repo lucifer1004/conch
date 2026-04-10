@@ -37,11 +37,41 @@ pub fn execute(input: &[u8]) -> Vec<u8> {
         }
     }
 
+    let files = if config.include_files {
+        use bare_vfs::EntryRef;
+        let mut map = std::collections::BTreeMap::new();
+        for (path, entry) in shell.fs.walk() {
+            if path == "/" {
+                continue;
+            }
+            let output = match entry {
+                EntryRef::File { content, mode, .. } => {
+                    match std::str::from_utf8(content) {
+                        Ok(s) => FileOutput::File {
+                            content: s.to_string(),
+                            mode,
+                        },
+                        Err(_) => continue, // skip binary files
+                    }
+                }
+                EntryRef::Dir { mode, .. } => FileOutput::Dir { mode },
+                EntryRef::Symlink { target, .. } => FileOutput::Symlink {
+                    target: target.to_string(),
+                },
+            };
+            map.insert(path, output);
+        }
+        Some(map)
+    } else {
+        None
+    };
+
     let out = SessionOutput {
         entries,
         final_path: shell.display_path(),
         final_user: shell.user.clone(),
         final_hostname: shell.hostname.clone(),
+        files,
     };
 
     serde_json::to_vec(&out).unwrap_or_default()
@@ -126,5 +156,38 @@ mod tests {
         let entries = v["entries"].as_array().unwrap();
         assert_eq!(entries.len(), 1, "expected only post-clear command");
         assert!(entries[0]["command"].as_str().unwrap().contains("second"));
+    }
+
+    #[test]
+    fn execute_include_files_returns_filesystem() {
+        let input = br#"{"user":"u","system":{"hostname":"h","users":[{"name":"u","home":"/home/u"}],"files":{"note.txt":"hello"}},"commands":["echo world > out.txt","ln -s note.txt link.txt","mkdir sub"],"include-files":true}"#;
+        let raw = execute(input);
+        let v: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        let files = v["files"].as_object().expect("files should be present");
+        // Check file
+        let out = &files["/home/u/out.txt"];
+        assert_eq!(out["type"].as_str(), Some("file"));
+        assert_eq!(out["content"].as_str(), Some("world"));
+        // Check symlink
+        let link = &files["/home/u/link.txt"];
+        assert_eq!(link["type"].as_str(), Some("symlink"));
+        assert_eq!(link["target"].as_str(), Some("note.txt"));
+        // Check directory
+        let sub = &files["/home/u/sub"];
+        assert_eq!(sub["type"].as_str(), Some("dir"));
+        // Check seeded file
+        let note = &files["/home/u/note.txt"];
+        assert_eq!(note["content"].as_str(), Some("hello"));
+    }
+
+    #[test]
+    fn execute_without_include_files_omits_files() {
+        let input = br#"{"user":"u","system":{"hostname":"h","users":[{"name":"u","home":"/home/u"}]},"commands":["echo hi"]}"#;
+        let raw = execute(input);
+        let v: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        assert!(
+            v.get("files").is_none(),
+            "files should be absent when not requested"
+        );
     }
 }

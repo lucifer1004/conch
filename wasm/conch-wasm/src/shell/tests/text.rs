@@ -146,6 +146,34 @@ fn sort_numeric_then_reverse() {
 }
 
 #[test]
+fn sort_with_delimiter_and_key() {
+    let mut s = shell_with_files(serde_json::json!({
+        "data.csv": "name,score\nalice,95\nbob,82\ncharlie,91"
+    }));
+    let (out, code, _) = s.run_line("sort -t, -k2 -rn data.csv");
+    assert_eq!(code, 0);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "alice,95", "highest score first: {out}");
+    assert_eq!(lines[1], "charlie,91");
+    assert_eq!(lines[2], "bob,82");
+    // header has score=0 numerically, so it goes last
+    assert_eq!(lines[3], "name,score");
+}
+
+#[test]
+fn sort_with_key_whitespace_default() {
+    let mut s = shell_with_files(serde_json::json!({
+        "data.txt": "alice 95\nbob 82\ncharlie 91"
+    }));
+    let (out, code, _) = s.run_line("sort -k2 -rn data.txt");
+    assert_eq!(code, 0);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "alice 95");
+    assert_eq!(lines[1], "charlie 91");
+    assert_eq!(lines[2], "bob 82");
+}
+
+#[test]
 fn uniq_dedupes_and_counts() {
     let mut s = shell_with_files(serde_json::json!({
         "u.txt": "a\na\nb\n"

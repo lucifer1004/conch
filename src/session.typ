@@ -33,7 +33,7 @@
   }
 }
 
-#let _execute-session(user, system, commands) = {
+#let _execute-session(user, system, commands, include-files: false) = {
   let today = datetime.today()
   let date-str = today.display(
     "[weekday repr:short] [month repr:short] [day padding:space] 00:00:00 UTC [year]",
@@ -43,6 +43,7 @@
     system: system,
     commands: commands,
     date: date-str,
+    include-files: include-files,
   ))
   json(_plugin.execute(bytes(config)))
 }

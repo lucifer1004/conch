@@ -58,13 +58,16 @@
 /// )
 /// #result.entries.at(0).output // "alice"
 /// ```
+/// - include-files (bool): If `true`, the returned dictionary includes a `files`
+///   key mapping each path to its content, mode, and type after execution.
 #let execute(
   system: none,
   user: "user",
   commands: (),
+  include-files: false,
 ) = {
   let sys = _resolve-system(system)
-  _execute-session(user, sys, commands)
+  _execute-session(user, sys, commands, include-files: include-files)
 }
 
 // --- Public shell functions ---

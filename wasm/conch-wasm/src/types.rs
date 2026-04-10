@@ -20,6 +20,8 @@ pub struct Config {
     pub commands: Vec<String>,
     #[serde(default)]
     pub date: Option<String>,
+    #[serde(default, rename = "include-files")]
+    pub include_files: bool,
 }
 
 #[derive(Deserialize, Default)]
@@ -72,6 +74,29 @@ pub struct OutputEntry {
     pub lang: Option<String>,
 }
 
+/// A filesystem entry in the output snapshot.
+#[derive(Serialize)]
+#[serde(tag = "type")]
+pub enum FileOutput {
+    #[serde(rename = "file")]
+    File {
+        content: String,
+        #[serde(serialize_with = "serialize_mode")]
+        mode: u16,
+    },
+    #[serde(rename = "dir")]
+    Dir {
+        #[serde(serialize_with = "serialize_mode")]
+        mode: u16,
+    },
+    #[serde(rename = "symlink")]
+    Symlink { target: String },
+}
+
+fn serialize_mode<S: serde::Serializer>(mode: &u16, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(&format!("{:o}", mode))
+}
+
 /// Full session output returned to Typst
 #[derive(Serialize)]
 pub struct SessionOutput {
@@ -82,6 +107,8 @@ pub struct SessionOutput {
     pub final_user: String,
     #[serde(rename = "final-hostname")]
     pub final_hostname: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files: Option<BTreeMap<String, FileOutput>>,
 }
 
 /// Deserialization helper: accept either a string or {content, mode} object

@@ -8,7 +8,7 @@ A minimal, synchronous, in-memory virtual filesystem for `no_std` and `wasm32-un
 - **Symlink-aware** -- transparent following, relative resolution, loop detection
 - **Serializable** -- `serde` feature for snapshot/restore (preserves hard links)
 - **Zero unsafe** -- no `unsafe` code anywhere in the crate
-- **`no_std`** -- pure Rust with `alloc` only, zero external dependencies by default
+- **`no_std`** -- pure Rust with `alloc` only, zero required dependencies (optional `serde`)
 
 ## Quick Start
 
@@ -87,6 +87,25 @@ fs.remove("/original.txt");
 assert_eq!(fs.read_to_string("/alias.txt")?, "shared content updated");
 ```
 
+### Typed Removal and Recursive Copy
+
+```rust
+// Typed removal -- returns errors if path is wrong type
+fs.remove_file("/hello.txt")?;   // error if path is a directory
+fs.remove_dir("/empty")?;        // error if path is a file or non-empty
+
+// Recursive directory copy
+fs.copy_recursive("/src", "/src-backup")?;
+```
+
+### Directories with Mode
+
+```rust
+// Create directory with explicit mode, bypassing umask
+fs.create_dir_with_mode("/secured", 0o700)?;
+fs.create_dir_all_with_mode("/a/b/c", 0o750)?;
+```
+
 ### Symlinks
 
 ```rust
@@ -108,8 +127,11 @@ let meta   = fs.symlink_metadata("/link.txt")?;  // metadata of the link itself
 fs.write_with_mode("/app.sh", b"#!/bin/sh", 0o755);
 
 // Switch user context (default is uid=0 root, which bypasses all checks)
-fs.set_current_user(1000, 1000);
-fs.add_supplementary_gid(100);
+fs.set_current_user(1000, 1000);       // sets uid+gid, clears supplementary groups
+fs.set_identity(1000, 1000, &[10, 100]); // sets uid, gid, and supplementary groups atomically
+fs.set_groups(&[10, 100]);             // replace supplementary groups
+fs.clear_groups();                     // remove all supplementary groups
+fs.add_supplementary_gid(100);        // add a single supplementary group
 
 // chmod requires file owner or root
 fs.set_mode("/app.sh", 0o700)?;
@@ -236,6 +258,14 @@ println!("{}", fs);
 // ├── src/
 // │   └── main.rs
 // └── hello.txt
+```
+
+### Clone
+
+`MemFs` implements `Clone` for snapshotting:
+
+```rust
+let snapshot = fs.clone();
 ```
 
 ## Use Cases

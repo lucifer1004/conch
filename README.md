@@ -111,18 +111,18 @@ Use `terminal` for standalone terminal documents and screenshots. Use `terminal-
 
 ## Supported Commands
 
-69 commands across 8 categories:
+80 commands across 8 categories:
 
-| Category       | Commands                                                                                                                                                                                       |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Filesystem** | `ls` (`-la`), `cat` (`-n`), `mkdir` (`-p`), `rmdir`, `touch`, `mktemp` (`-d`), `rm` (`-rf`), `cp`, `mv`, `ln` (`-s`), `readlink`, `find` (`-name`, `-type`), `tee` (`-a`), `chmod`             |
-| **Text**       | `echo` (`-e`, `-n`), `printf`, `head` (`-n`), `tail` (`-n`), `wc`, `grep` (`-invc`), `sort` (`-rn`), `uniq` (`-c`), `cut` (`-d`, `-f`), `tr` (`-d`), `rev`, `seq`, `tac`, `nl`, `paste` (`-d`) |
-| **Transform**  | `sed` (`s///`, `s///g`, `-i`), `diff`, `xxd`, `base64` (`-d`)                                                                                                                                  |
-| **Inspect**    | `stat`, `test`/`[` (`-efdrwxs`, `=`, `!=`, `-eq`/`-ne`/`-lt`/`-gt`), `du` (`-sh`), `tree`                                                                                                      |
-| **Navigation** | `cd`, `pwd`, `basename`, `dirname`, `realpath`, `whoami`, `hostname`, `date`, `which`, `type`, `env`, `printenv`, `export`                                                                     |
-| **User mgmt**  | `useradd`/`adduser`, `groupadd`/`addgroup`, `userdel`/`deluser`, `usermod` (`-aG`), `su` (`-`), `sudo`, `passwd`, `chown` (`-R`), `chgrp` (`-R`), `id`, `groups`                               |
-| **Scripting**  | `bash`/`sh`, `./script.sh`                                                                                                                                                                     |
-| **Builtins**   | `clear`, `true`, `false`                                                                                                                                                                       |
+| Category       | Commands                                                                                                                                                                                                                        |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Filesystem** | `ls` (`-la`), `cat` (`-n`), `mkdir` (`-p`), `rmdir`, `touch`, `mktemp` (`-d`), `rm` (`-rf`), `cp` (`-r`), `mv`, `ln` (`-s`, hard links), `readlink` (`-f`), `find` (`-name`, `-type`), `tee` (`-a`), `chmod` (octal + symbolic) |
+| **Text**       | `echo` (`-e`, `-n`), `printf`, `head` (`-n`), `tail` (`-n`), `wc`, `grep` (`-invc`), `sort` (`-rn`), `uniq` (`-c`), `cut` (`-d`, `-f`), `tr` (`-d`), `rev`, `seq` (1-, 2-, 3-arg), `tac`, `nl`, `paste` (`-d`)                  |
+| **Transform**  | `sed` (`s///`, `s///g`, `-i`), `diff`, `xxd`, `base64` (`-d`)                                                                                                                                                                   |
+| **Inspect**    | `stat`, `test`/`[` (`-efdrwxs`, `=`, `!=`, `-eq`/`-ne`/`-lt`/`-gt`), `du` (`-sh`), `tree`                                                                                                                                       |
+| **Navigation** | `cd`, `pwd`, `basename`, `dirname`, `realpath`, `whoami`, `hostname`, `date`, `which`, `type`, `env`, `printenv`, `export`, `unset`, `sleep`, `history`                                                                         |
+| **User mgmt**  | `useradd`/`adduser`, `groupadd`/`addgroup`, `userdel`/`deluser`, `usermod` (`-aG`), `su` (`-`), `sudo`, `passwd`, `chown` (`-R`), `chgrp` (`-R`), `id`, `groups`                                                                |
+| **Scripting**  | `bash`/`sh`, `source`/`.`, `./script.sh`                                                                                                                                                                                        |
+| **Builtins**   | `clear`, `true`, `false`                                                                                                                                                                                                        |
 
 ## Shell Features
 
@@ -160,6 +160,15 @@ echo "a"; echo "b"; echo "c"   # always run all
 echo "Hello, $USER!"
 echo "Shell: $SHELL"
 export MY_VAR=hello && echo $MY_VAR
+```
+
+### Command History
+
+Navigate previous commands with Up/Down arrows in per-char animations. View history with the `history` builtin.
+
+```shell
+history
+\x1b[A          # recall previous command
 ```
 
 ### Tilde & Glob Expansion
@@ -459,16 +468,18 @@ Pass `show-cursor: false` to `terminal`, `terminal-block`, `terminal-per-line`, 
 
 Simulate typing corrections and cursor movement in per-char animations using `\xNN` escape notation. Lines without escapes use the fast default path (zero overhead).
 
-| Escape    | Key       | Effect                         |
-| --------- | --------- | ------------------------------ |
-| `\x7f`    | Backspace | Delete character before cursor |
-| `\x1b[C`  | Right     | Move cursor right              |
-| `\x1b[D`  | Left      | Move cursor left               |
-| `\x1b[H`  | Home      | Move cursor to start of line   |
-| `\x1b[F`  | End       | Move cursor to end of line     |
-| `\x1b[3~` | Delete    | Delete character at cursor     |
-| `\x03`    | Ctrl+C    | Interrupt (emits `^C` marker)  |
-| `\\`      | `\`       | Literal backslash              |
+| Escape    | Key       | Effect                            |
+| --------- | --------- | --------------------------------- |
+| `\x7f`    | Backspace | Delete character before cursor    |
+| `\x1b[C`  | Right     | Move cursor right                 |
+| `\x1b[D`  | Left      | Move cursor left                  |
+| `\x1b[H`  | Home      | Move cursor to start of line      |
+| `\x1b[F`  | End       | Move cursor to end of line        |
+| `\x1b[3~` | Delete    | Delete character at cursor        |
+| `\x1b[A`  | Up        | Recall previous command (history) |
+| `\x1b[B`  | Down      | Recall next command (history)     |
+| `\x03`    | Ctrl+C    | Interrupt (emits `^C` marker)     |
+| `\\`      | `\`       | Literal backslash                 |
 
 Example — backspace correction and mid-line cursor editing:
 
@@ -669,6 +680,31 @@ The `execute()` function returns a dictionary with:
 
 - `entries`: array of command results, each with `user`, `hostname`, `path`, `command`, `output`, `exit-code`, and optionally `lang` (detected language for syntax highlighting)
 - `final-path`: the working directory after all commands
+- `files`: (only when `include-files: true`) dictionary mapping each path to its type, content, and mode
+
+### Filesystem Extraction
+
+Pass `include-files: true` to capture the filesystem state after execution. Use it to extract generated files into your document:
+
+```typst
+#let result = execute(
+  system: system(files: ("data.csv": "name,score\nalice,95\nbob,82")),
+  user: "demo",
+  commands: ("sort -t, -k2 -rn data.csv > ranked.csv",),
+  include-files: true,
+)
+
+// Use the generated file in prose
+Top scorer: #result.files.at("/home/demo/ranked.csv").content
+```
+
+Each entry in `files` is tagged by type:
+
+- **file**: `(type: "file", content: "...", mode: 644)`
+- **dir**: `(type: "dir", mode: 755)`
+- **symlink**: `(type: "symlink", target: "...")`
+
+![Filesystem extraction demo](./demo/include-files.png)
 
 ## API Reference
 
