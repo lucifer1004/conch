@@ -21,6 +21,8 @@ pub enum KeyEvent {
     End,
     CtrlC,
     CtrlL,
+    HistoryUp,
+    HistoryDown,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -105,6 +107,11 @@ impl LineBuffer {
         } else {
             false
         }
+    }
+
+    fn set_content(&mut self, s: &str) {
+        self.chars = s.chars().collect();
+        self.cursor = self.chars.len();
     }
 
     fn text(&self) -> String {
@@ -211,8 +218,8 @@ pub fn parse_key_events(raw: &[u8]) -> Vec<KeyEvent> {
                         let final_byte = raw[end];
                         let params = &raw[csi_start..end];
                         match final_byte {
-                            b'A' => {} // Up — no-op (history not implemented)
-                            b'B' => {} // Down — no-op
+                            b'A' => events.push(KeyEvent::HistoryUp),
+                            b'B' => events.push(KeyEvent::HistoryDown),
                             b'C' => events.push(KeyEvent::Right),
                             b'D' => events.push(KeyEvent::Left),
                             b'H' => events.push(KeyEvent::Home),
@@ -253,7 +260,13 @@ pub fn parse_key_events(raw: &[u8]) -> Vec<KeyEvent> {
 /// Process a line containing `\xNN` escape notation and return the buffer
 /// state after each key event. Duplicate states (no visible change) are
 /// suppressed to avoid wasted animation frames.
+/// Process input keystrokes without history support.
 pub fn process(input: &str) -> Vec<BufferState> {
+    process_with_history(input, &[])
+}
+
+/// Process input keystrokes with history navigation (Up/Down arrows).
+pub fn process_with_history(input: &str, history: &[String]) -> Vec<BufferState> {
     let raw = unescape_hex(input);
     let events = parse_key_events(&raw);
 
@@ -261,6 +274,9 @@ pub fn process(input: &str) -> Vec<BufferState> {
     let mut states = Vec::with_capacity(events.len());
     let mut prev_text = String::new();
     let mut prev_cursor: usize = 0;
+    // History index: history.len() means "current (new) line"
+    let mut hist_idx = history.len();
+    let mut saved_current = String::new();
 
     for event in &events {
         let (changed, label) = match event {
@@ -274,6 +290,31 @@ pub fn process(input: &str) -> Vec<BufferState> {
             KeyEvent::Right => (buf.right(), "right"),
             KeyEvent::Home => (buf.home(), "home"),
             KeyEvent::End => (buf.end(), "end"),
+            KeyEvent::HistoryUp => {
+                if !history.is_empty() && hist_idx > 0 {
+                    if hist_idx == history.len() {
+                        saved_current = buf.text();
+                    }
+                    hist_idx -= 1;
+                    buf.set_content(&history[hist_idx]);
+                    (true, "history-up")
+                } else {
+                    (false, "history-up")
+                }
+            }
+            KeyEvent::HistoryDown => {
+                if hist_idx < history.len() {
+                    hist_idx += 1;
+                    if hist_idx == history.len() {
+                        buf.set_content(&saved_current);
+                    } else {
+                        buf.set_content(&history[hist_idx]);
+                    }
+                    (true, "history-down")
+                } else {
+                    (false, "history-down")
+                }
+            }
             KeyEvent::CtrlC => {
                 states.push(buf.state("ctrl-c"));
                 prev_text = buf.text();
@@ -392,12 +433,34 @@ mod tests {
     // --- CSI parser robustness ---
 
     #[test]
-    fn up_down_arrows_are_noops() {
-        // Up/Down should NOT insert anything into the buffer
+    fn up_down_without_history_are_noops() {
+        // Without history, Up/Down should NOT change the buffer
         let states = process("ab\\x1b[A\\x1b[Bc");
-        let last = states.last().unwrap();
+        let last = states.last().expect("should have states");
         assert_eq!(last.text, "abc");
         assert_eq!(last.cursor, 3);
+    }
+
+    #[test]
+    fn up_arrow_navigates_history() {
+        let history = vec!["echo hello".to_string(), "ls -la".to_string()];
+        // Type "x", then press Up twice, then Down once
+        let states = process_with_history("x\\x1b[A\\x1b[A\\x1b[B", &history);
+        // After "x": buffer = "x"
+        // After Up: buffer = "ls -la" (most recent)
+        // After Up: buffer = "echo hello" (older)
+        // After Down: buffer = "ls -la" (back to recent)
+        let last = states.last().expect("should have states");
+        assert_eq!(last.text, "ls -la");
+    }
+
+    #[test]
+    fn down_past_history_restores_current() {
+        let history = vec!["old cmd".to_string()];
+        // Type "new", Up (shows "old cmd"), Down (restores "new")
+        let states = process_with_history("new\\x1b[A\\x1b[B", &history);
+        let last = states.last().expect("should have states");
+        assert_eq!(last.text, "new");
     }
 
     #[test]

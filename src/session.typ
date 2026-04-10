@@ -10,6 +10,13 @@
 /// Returns an array of buffer states: (text, cursor, event).
 #let _process-keyline(line) = json(_plugin.process_keyline(bytes(line)))
 
+/// Process keyline with history for Up/Down arrow navigation.
+#let _process-keyline-with-history(line, history) = json(
+  _plugin.process_keyline_with_history(
+    bytes(json.encode((input: line, history: history))),
+  ),
+)
+
 #let _find-raw(it) = {
   ""
   if type(it) == content {

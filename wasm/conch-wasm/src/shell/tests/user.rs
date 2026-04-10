@@ -324,3 +324,35 @@ fn set_current_user_clears_supplementary_groups() {
         "root should not inherit alice's groups: {out}"
     );
 }
+
+#[test]
+fn useradd_after_system_user_no_gid_collision() {
+    // Bug: add_user_with_ids didn't advance next_gid, so useradd
+    // could overwrite a system user's primary group
+    let v = serde_json::json!({
+        "user": "u",
+        "system": {
+            "hostname": "h",
+            "users": [
+                {"name": "u", "home": "/home/u"},
+                {"name": "alice", "home": "/home/alice"}
+            ],
+            "files": {},
+        },
+        "commands": [],
+    });
+    let c: crate::types::Config = serde_json::from_value(v).expect("valid config");
+    let mut s = crate::shell::Shell::new(&c);
+    // Create bob after system users alice and u
+    s.run_line("sudo useradd bob");
+    // alice's group should still be "alice", not "bob"
+    s.run_line("su alice");
+    let (out, _, _) = s.run_line("id");
+    // id output: "uid=1001(alice) gid=1001(alice) groups=1001(alice)"
+    // The key check: gid must show "(alice)" not "(bob)"
+    let gid_part = out
+        .split_whitespace()
+        .find(|s| s.starts_with("gid="))
+        .unwrap_or("");
+    assert_eq!(gid_part, "gid=1001(alice)", "got full id: {out}");
+}

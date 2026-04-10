@@ -50,5 +50,7 @@ whoami
 id
 sudo cat /root/flag.txt
 tree
+history
+\x1b[A\x1b[A\x1b[A
 eco\x1b[Dh\x1b[F "All features!"
 ```]

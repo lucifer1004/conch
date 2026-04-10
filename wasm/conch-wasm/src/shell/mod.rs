@@ -28,6 +28,7 @@ pub struct Shell {
     pub(crate) last_exit_code: i32,
     pub(crate) users: UserDb,
     pub(crate) tmp_counter: u64,
+    pub(crate) history: Vec<String>,
 }
 
 impl Shell {
@@ -184,6 +185,7 @@ impl Shell {
             last_exit_code: 0,
             users: users_db,
             tmp_counter: 0,
+            history: Vec::new(),
         }
     }
 
@@ -287,6 +289,10 @@ impl Shell {
     /// Run a command line and return (output, exit_code, lang_hint).
     /// This is the core execution engine used by both interactive and script modes.
     pub fn run_line(&mut self, line: &str) -> (String, i32, Option<String>) {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() {
+            self.history.push(trimmed.to_string());
+        }
         let chain = crate::parser::parse(line);
 
         let mut all_output = String::new();

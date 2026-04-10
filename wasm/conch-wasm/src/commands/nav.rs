@@ -125,6 +125,16 @@ impl Shell {
         (String::new(), 0)
     }
 
+    pub fn cmd_history(&self, _args: &[String]) -> (String, i32) {
+        let out: Vec<String> = self
+            .history
+            .iter()
+            .enumerate()
+            .map(|(i, cmd)| format!("{:>5}  {}", i + 1, cmd))
+            .collect();
+        (out.join("\n"), 0)
+    }
+
     pub fn cmd_realpath(&self, args: &[String]) -> (String, i32) {
         if args.is_empty() {
             return ("realpath: missing operand".into(), 1);

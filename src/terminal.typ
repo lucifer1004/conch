@@ -1,6 +1,9 @@
 #import "theme.typ": _resolve-font, _resolve-style, _resolve-theme
 #import "chrome.typ": _resolve-chrome
-#import "session.typ": _execute-session, _parse-commands, _process-keyline
+#import "session.typ": (
+  _execute-session, _parse-commands, _process-keyline,
+  _process-keyline-with-history,
+)
 #import "render.typ": _render-frame
 
 // --- System constructor ---
@@ -191,24 +194,36 @@
     let final-session = _execute-session(user, sys, run-cmds)
     frames += (frame(final-session, last-cmd),)
   } else if mode == "per-char" {
-    // Pre-process keylines
-    let cmd-data = run-cmds.map(cmd => {
-      if cmd.contains("\\x") {
-        let states = _process-keyline(cmd)
+    // Pre-process keylines with history
+    let cmd-data = {
+      let result = ()
+      for i in range(run-cmds.len()) {
+        let cmd = run-cmds.at(i)
+        let history = result.map(d => d.final)
+        let d = if cmd.contains("\\x") {
+          let states = _process-keyline-with-history(cmd, history)
+          let final-text = if states.len() > 0 { states.last().text } else {
+            ""
+          }
+          (final: final-text, states: states)
+        } else {
+          (final: cmd, states: none)
+        }
+        result += (d,)
+      }
+      result
+    }
+    let exec-cmds = cmd-data.map(d => d.final)
+
+    let last-data = {
+      let history = exec-cmds
+      if last-cmd.contains("\\x") {
+        let states = _process-keyline-with-history(last-cmd, history)
         let final-text = if states.len() > 0 { states.last().text } else { "" }
         (final: final-text, states: states)
       } else {
-        (final: cmd, states: none)
+        (final: last-cmd, states: none)
       }
-    })
-    let exec-cmds = cmd-data.map(d => d.final)
-
-    let last-data = if last-cmd.contains("\\x") {
-      let states = _process-keyline(last-cmd)
-      let final-text = if states.len() > 0 { states.last().text } else { "" }
-      (final: final-text, states: states)
-    } else {
-      (final: last-cmd, states: none)
     }
 
     for i in range(cmd-data.len()) {
@@ -428,24 +443,34 @@
   let last-cmd = commands.last()
   let first-frame = true
 
-  // Pre-process: resolve key events for lines with \x escapes
-  let cmd-data = run-cmds.map(cmd => {
-    if cmd.contains("\\x") {
-      let states = _process-keyline(cmd)
+  // Pre-process: resolve key events for lines with \x escapes (with history)
+  let cmd-data = {
+    let result = ()
+    for i in range(run-cmds.len()) {
+      let cmd = run-cmds.at(i)
+      let history = result.map(d => d.final)
+      let d = if cmd.contains("\\x") {
+        let states = _process-keyline-with-history(cmd, history)
+        let final-text = if states.len() > 0 { states.last().text } else { "" }
+        (final: final-text, states: states)
+      } else {
+        (final: cmd, states: none)
+      }
+      result += (d,)
+    }
+    result
+  }
+  let exec-cmds = cmd-data.map(d => d.final)
+
+  let last-data = {
+    let history = exec-cmds
+    if last-cmd.contains("\\x") {
+      let states = _process-keyline-with-history(last-cmd, history)
       let final-text = if states.len() > 0 { states.last().text } else { "" }
       (final: final-text, states: states)
     } else {
-      (final: cmd, states: none)
+      (final: last-cmd, states: none)
     }
-  })
-  let exec-cmds = cmd-data.map(d => d.final)
-
-  let last-data = if last-cmd.contains("\\x") {
-    let states = _process-keyline(last-cmd)
-    let final-text = if states.len() > 0 { states.last().text } else { "" }
-    (final: final-text, states: states)
-  } else {
-    (final: last-cmd, states: none)
   }
 
   for i in range(cmd-data.len()) {

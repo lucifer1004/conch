@@ -63,6 +63,26 @@ pub fn process_keyline(input: &[u8]) -> Vec<u8> {
     serde_json::to_vec(&states).unwrap_or_default()
 }
 
+/// Process keyline input with history for Up/Down arrow navigation.
+/// Input: JSON `{"input": "...", "history": ["cmd1", "cmd2"]}`
+#[wasm_func]
+pub fn process_keyline_with_history(input: &[u8]) -> Vec<u8> {
+    #[derive(serde::Deserialize)]
+    struct Input {
+        input: String,
+        #[serde(default)]
+        history: Vec<String>,
+    }
+    let parsed: Input = match serde_json::from_slice(input) {
+        Ok(v) => v,
+        Err(e) => {
+            return format!(r#"[{{"text":"","cursor":0,"event":"error: {}"}}]"#, e).into_bytes();
+        }
+    };
+    let states = keyline::process_with_history(&parsed.input, &parsed.history);
+    serde_json::to_vec(&states).unwrap_or_default()
+}
+
 #[wasm_func]
 pub fn version() -> Vec<u8> {
     env!("CARGO_PKG_VERSION").as_bytes().to_vec()

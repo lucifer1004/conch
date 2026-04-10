@@ -229,3 +229,41 @@ fn sleep_is_noop() {
     let (_, code, _) = s.run_line("sleep 1");
     assert_eq!(code, 0);
 }
+
+#[test]
+fn history_records_commands() {
+    let mut s = shell();
+    s.run_line("echo hello");
+    s.run_line("ls");
+    s.run_line("pwd");
+    let (out, code, _) = s.run_line("history");
+    assert_eq!(code, 0);
+    assert!(out.contains("echo hello"), "got: {out}");
+    assert!(out.contains("ls"), "got: {out}");
+    assert!(out.contains("pwd"), "got: {out}");
+    assert!(
+        out.contains("history"),
+        "history itself should be recorded: {out}"
+    );
+    // Check numbering
+    assert!(
+        out.contains("    1  echo hello"),
+        "expected numbered output: {out}"
+    );
+}
+
+#[test]
+fn history_via_execute() {
+    let mut s = shell();
+    s.execute("echo first");
+    s.execute("echo second");
+    let entry = s.execute("history");
+    assert_eq!(entry.exit_code, 0);
+    assert!(entry.output.contains("echo first"), "got: {}", entry.output);
+    assert!(
+        entry.output.contains("echo second"),
+        "got: {}",
+        entry.output
+    );
+    assert!(entry.output.contains("history"), "got: {}", entry.output);
+}

@@ -96,9 +96,12 @@ impl UserDb {
         self.users.insert(uid, entry);
         self.name_to_uid.insert(name.to_string(), uid);
 
-        // Update next_uid if needed
+        // Update next_uid/next_gid if needed
         if uid >= self.next_uid {
             self.next_uid = uid + 1;
+        }
+        if gid >= self.next_gid {
+            self.next_gid = gid + 1;
         }
         uid
     }
