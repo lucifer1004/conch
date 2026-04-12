@@ -9,6 +9,26 @@ const MAX_LOOP_ITERATIONS: u32 = 10_000;
 /// Maximum function call depth to prevent stack overflow from recursion.
 const MAX_CALL_DEPTH: u32 = 64;
 
+/// Per-statement execution result, used by `interpret_stmts_collecting`.
+pub(crate) struct StmtResult {
+    /// Shell state captured *before* this statement executed.
+    pub user: Str,
+    pub hostname: Str,
+    pub display_path: String,
+    /// Source text of the statement (extracted from the script).
+    pub command_source: String,
+    /// Source span of the statement.
+    pub first_line: u32,
+    pub last_line: u32,
+    /// Output lines produced by this statement.
+    pub output: Vec<String>,
+    pub exit_code: i32,
+    pub lang: Option<String>,
+    pub bg_completions: Vec<String>,
+    /// The control flow returned by this statement.
+    pub flow: ControlFlow,
+}
+
 /// Control flow result from executing a statement.
 pub(crate) enum ControlFlow {
     /// Normal execution completed with the given exit code.
@@ -30,8 +50,24 @@ impl ControlFlow {
     }
 }
 
+/// Return an error message for bare return/break/continue at the top level.
+pub(crate) fn top_level_flow_error(flow: &ControlFlow) -> Option<String> {
+    match flow {
+        ControlFlow::Return(_) => {
+            Some("conch: return: can only `return` from a function or sourced script\n".into())
+        }
+        ControlFlow::Break(_) => {
+            Some("conch: break: only meaningful in a `for`, `while`, or `until` loop\n".into())
+        }
+        ControlFlow::Continue(_) => {
+            Some("conch: continue: only meaningful in a `for`, `while`, or `until` loop\n".into())
+        }
+        ControlFlow::Normal(_) => None,
+    }
+}
+
 impl Shell {
-    /// Execute a list of parsed statements, collecting output.
+    /// Execute a list of parsed statements, collecting output into a flat Vec.
     pub(crate) fn interpret_stmts(
         &mut self,
         stmts: &[Stmt],
@@ -55,6 +91,80 @@ impl Shell {
             }
         }
         last
+    }
+
+    /// Execute statements, collecting per-statement results.
+    ///
+    /// Each `StmtResult` captures the shell state before execution plus
+    /// the output, exit code, lang hint, and background completions produced
+    /// by that statement. `script_source` is the original script text used
+    /// to extract command source strings and push history entries.
+    /// Errexit / exec_pending are handled internally.
+    pub(crate) fn interpret_stmts_collecting(
+        &mut self,
+        stmts: &[Stmt],
+        script_source: &str,
+    ) -> (Vec<StmtResult>, ControlFlow) {
+        let mut results = Vec::new();
+        let mut last = ControlFlow::Normal(0);
+        for stmt in stmts {
+            let span = stmt.span();
+            let command_source = script_source
+                .get(span.start_byte as usize..span.end_byte as usize)
+                .unwrap_or("")
+                .to_string();
+
+            // Record in history (like interactive bash)
+            let trimmed = command_source.trim();
+            if !trimmed.is_empty() {
+                self.history.push(trimmed.to_string());
+            }
+
+            let pre_user = self.ident.user.clone();
+            let pre_hostname = self.ident.hostname.clone();
+            let pre_path = self.display_path();
+
+            let mut output = Vec::new();
+            last = self.interpret_stmt(stmt, &mut output);
+
+            let exit_code = last.exit_code();
+            let lang = self.last_lang.take();
+            let bg = std::mem::take(&mut self.pending_bg_completions);
+
+            results.push(StmtResult {
+                user: pre_user,
+                hostname: pre_hostname,
+                display_path: pre_path,
+                command_source,
+                first_line: span.start_line,
+                last_line: span.end_line,
+                output,
+                exit_code,
+                lang,
+                bg_completions: bg,
+                flow: match &last {
+                    ControlFlow::Normal(c) => ControlFlow::Normal(*c),
+                    ControlFlow::Return(c) => ControlFlow::Return(*c),
+                    ControlFlow::Break(n) => ControlFlow::Break(*n),
+                    ControlFlow::Continue(n) => ControlFlow::Continue(*n),
+                },
+            });
+
+            match &last {
+                ControlFlow::Normal(code) => {
+                    // errexit (-e): abort script on non-zero exit code
+                    if self.exec.opts.errexit && *code != 0 && self.exec.in_condition == 0 {
+                        return (results, last);
+                    }
+                }
+                _ => return (results, last),
+            }
+            // exec builtin: stop script execution
+            if self.exec.exec_pending {
+                return (results, last);
+            }
+        }
+        (results, last)
     }
 
     fn interpret_stmt(&mut self, stmt: &Stmt, output: &mut Vec<String>) -> ControlFlow {
@@ -100,13 +210,9 @@ impl Shell {
                 let code = flow.exit_code();
 
                 // Execute EXIT trap for this subshell before restoring
-                if let Some(exit_cmd) = self.defs.traps.remove("EXIT") {
-                    if !exit_cmd.is_empty() {
-                        let (out, _, _) = self.run_line(&exit_cmd);
-                        if !out.is_empty() {
-                            output.push(out);
-                        }
-                    }
+                let trap_out = self.fire_exit_trap();
+                if !trap_out.is_empty() {
+                    output.push(trap_out);
                 }
 
                 self.restore_subshell(snap);
@@ -425,12 +531,10 @@ impl Shell {
 
         let code = match &flow {
             ControlFlow::Return(c) | ControlFlow::Normal(c) => *c,
-            ControlFlow::Break(_) => {
-                output.push("conch: break: only meaningful in a loop".to_string());
-                1
-            }
-            ControlFlow::Continue(_) => {
-                output.push("conch: continue: only meaningful in a loop".to_string());
+            other => {
+                if let Some(msg) = top_level_flow_error(other) {
+                    output.push(msg);
+                }
                 1
             }
         };

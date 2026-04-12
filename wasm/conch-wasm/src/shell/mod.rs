@@ -1059,23 +1059,18 @@ impl Shell {
     /// Run a command line and return (output, exit_code, lang_hint).
     /// This is the core execution engine used by both interactive and script modes.
     pub fn run_line(&mut self, line: &str) -> (String, i32, Option<String>) {
-        let trimmed = line.trim();
-        if !trimmed.is_empty() {
-            self.history.push(trimmed.to_string());
+        self.run_line_with_stdin(line, None)
+    }
+
+    /// Fire the EXIT trap if set, returning any output.
+    pub(crate) fn fire_exit_trap(&mut self) -> String {
+        if let Some(exit_cmd) = self.defs.traps.remove("EXIT") {
+            if !exit_cmd.is_empty() {
+                let (out, _, _) = self.run_line(&exit_cmd);
+                return out;
+            }
         }
-        if trimmed.is_empty() {
-            return (String::new(), 0, None);
-        }
-        // Check for unterminated quotes before parsing
-        if has_unterminated_quote(trimmed) {
-            return (
-                "conch: syntax error: unterminated quote".to_string(),
-                2,
-                None,
-            );
-        }
-        let cmd_list = crate::script::word_parser::parse_command_line(trimmed);
-        self.exec_command_list(&cmd_list)
+        String::new()
     }
 
     /// Execute a full command line (handles pipes, redirects, chaining).
@@ -1115,6 +1110,13 @@ impl Shell {
         if trimmed.is_empty() {
             return (String::new(), 0, None);
         }
+        if has_unterminated_quote(trimmed) {
+            return (
+                "conch: syntax error: unterminated quote".to_string(),
+                2,
+                None,
+            );
+        }
         let cmd_list = crate::script::word_parser::parse_command_line(trimmed);
         self.exec_command_list_with_stdin(&cmd_list, stdin)
     }
@@ -1148,36 +1150,28 @@ impl Shell {
                 Ok(ast) => {
                     let mut output = Vec::new();
                     let flow = self.interpret_stmts(&ast.stmts, &mut output);
-                    let code = match &flow {
-                        crate::script::interp::ControlFlow::Normal(c) => *c,
-                        crate::script::interp::ControlFlow::Return(c) => {
-                            if run_exit_trap {
-                                // Non-source script: return at top level is an error
-                                output.push("conch: return: can only `return` from a function or sourced script".to_string());
-                                1
-                            } else {
-                                // source'd script: return is valid, exit with code
-                                *c
-                            }
-                        }
-                        crate::script::interp::ControlFlow::Break(_) => {
-                            output.push("conch: break: only meaningful in a loop".to_string());
+                    let code = if !run_exit_trap {
+                        if let crate::script::interp::ControlFlow::Return(c) = &flow {
+                            // source'd script: return is valid, exit with code
+                            *c
+                        } else if let Some(msg) = crate::script::interp::top_level_flow_error(&flow)
+                        {
+                            output.push(msg);
                             1
+                        } else {
+                            flow.exit_code()
                         }
-                        crate::script::interp::ControlFlow::Continue(_) => {
-                            output.push("conch: continue: only meaningful in a loop".to_string());
-                            1
-                        }
+                    } else if let Some(msg) = crate::script::interp::top_level_flow_error(&flow) {
+                        output.push(msg);
+                        1
+                    } else {
+                        flow.exit_code()
                     };
                     // Execute EXIT trap only if requested (not for `source`)
                     if run_exit_trap {
-                        if let Some(exit_cmd) = self.defs.traps.remove("EXIT") {
-                            if !exit_cmd.is_empty() {
-                                let (out, _, _) = self.run_line(&exit_cmd);
-                                if !out.is_empty() {
-                                    output.push(out);
-                                }
-                            }
+                        let trap_out = self.fire_exit_trap();
+                        if !trap_out.is_empty() {
+                            output.push(trap_out);
                         }
                     }
                     (output.join("\n"), code)
@@ -1238,13 +1232,9 @@ impl Shell {
 
             // Execute EXIT trap only if requested
             if run_exit_trap {
-                if let Some(exit_cmd) = self.defs.traps.remove("EXIT") {
-                    if !exit_cmd.is_empty() {
-                        let (out, _, _) = self.run_line(&exit_cmd);
-                        if !out.is_empty() {
-                            all_output.push(out);
-                        }
-                    }
+                let trap_out = self.fire_exit_trap();
+                if !trap_out.is_empty() {
+                    all_output.push(trap_out);
                 }
             }
 

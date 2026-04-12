@@ -38,37 +38,51 @@ pub fn execute(input: &[u8]) -> Vec<u8> {
 
     match crate::script::parse_script(&script) {
         Ok(ast) => {
-            for stmt in &ast.stmts {
-                let display = shell.display_path();
-                let pre_user = shell.ident.user.clone();
-                let pre_hostname = shell.ident.hostname.clone();
-                let mut output = Vec::new();
-                let flow = shell.interpret_stmts(std::slice::from_ref(stmt), &mut output);
-                let span = stmt.span();
-                let command_source = script
-                    .get(span.start_byte as usize..span.end_byte as usize)
-                    .unwrap_or("")
-                    .to_string();
+            let (results, _final_flow) = shell.interpret_stmts_collecting(&ast.stmts, &script);
 
+            // Map per-statement results to OutputEntry objects
+            for r in results {
                 // Handle __CLEAR__
-                if output.last().map(|s| s.as_str()) == Some("__CLEAR__") {
+                if r.output.last().map(|s| s.as_str()) == Some("__CLEAR__") {
                     entries.clear();
                     continue;
                 }
 
-                let bg = std::mem::take(&mut shell.pending_bg_completions);
-                let lang = shell.last_lang.take();
+                let mut output = r.output;
+
+                // Top-level control flow errors (bare return/break/continue)
+                if let Some(msg) = crate::script::interp::top_level_flow_error(&r.flow) {
+                    output.push(msg);
+                }
+
                 entries.push(OutputEntry {
-                    user: pre_user,
-                    hostname: pre_hostname,
-                    path: display,
-                    command: command_source,
+                    user: r.user,
+                    hostname: r.hostname,
+                    path: r.display_path,
+                    command: r.command_source,
                     output: output.concat(),
-                    exit_code: flow.exit_code(),
-                    lang,
-                    first_line: Some(span.start_line),
-                    last_line: Some(span.end_line),
-                    bg_completions: bg,
+                    exit_code: r.exit_code,
+                    lang: r.lang,
+                    first_line: Some(r.first_line),
+                    last_line: Some(r.last_line),
+                    bg_completions: r.bg_completions,
+                });
+            }
+
+            // Fire EXIT trap at session end
+            let trap_out = shell.fire_exit_trap();
+            if !trap_out.is_empty() {
+                entries.push(OutputEntry {
+                    user: shell.ident.user.clone(),
+                    hostname: shell.ident.hostname.clone(),
+                    path: shell.display_path(),
+                    command: "trap EXIT".to_string(),
+                    output: trap_out,
+                    exit_code: 0,
+                    lang: None,
+                    first_line: None,
+                    last_line: None,
+                    bg_completions: Vec::new(),
                 });
             }
         }
@@ -458,6 +472,76 @@ mod tests {
             entries[0].get("lang").is_none() || entries[0]["lang"].is_null(),
             "cat data.txt should not set lang: {:?}",
             entries[0]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn execute_history_records_commands() -> Result<(), String> {
+        let input = br#"{"user":"u","system":{"hostname":"h","users":[{"name":"u","home":"/home/u"}]},"commands":["echo first","echo second","history"]}"#;
+        let raw = execute(input);
+        let v: serde_json::Value =
+            serde_json::from_slice(&raw).map_err(|e| format!("json parse: {}", e))?;
+        let entries = v["entries"].as_array().ok_or("missing entries")?;
+        assert_eq!(entries.len(), 3);
+        let hist_output = entries[2]["output"]
+            .as_str()
+            .ok_or("missing history output")?;
+        assert!(
+            hist_output.contains("echo first"),
+            "history should contain 'echo first': {}",
+            hist_output
+        );
+        assert!(
+            hist_output.contains("echo second"),
+            "history should contain 'echo second': {}",
+            hist_output
+        );
+        assert!(
+            hist_output.contains("history"),
+            "history should contain 'history' itself: {}",
+            hist_output
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn execute_errexit_stops_on_failure() -> Result<(), String> {
+        let input = br#"{"user":"u","system":{"hostname":"h","users":[{"name":"u","home":"/home/u"}]},"commands":["set -e","false","echo should_not_run"]}"#;
+        let raw = execute(input);
+        let v: serde_json::Value =
+            serde_json::from_slice(&raw).map_err(|e| format!("json parse: {}", e))?;
+        let entries = v["entries"].as_array().ok_or("missing entries")?;
+        // "set -e" and "false" should run, but "echo should_not_run" should NOT
+        let has_should_not = entries.iter().any(|e| {
+            e["output"]
+                .as_str()
+                .unwrap_or("")
+                .contains("should_not_run")
+        });
+        assert!(
+            !has_should_not,
+            "errexit should stop after 'false': {:?}",
+            entries
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn execute_exit_trap_fires() -> Result<(), String> {
+        let input = br#"{"user":"u","system":{"hostname":"h","users":[{"name":"u","home":"/home/u"}]},"commands":["trap 'echo goodbye' EXIT","echo hello"]}"#;
+        let raw = execute(input);
+        let v: serde_json::Value =
+            serde_json::from_slice(&raw).map_err(|e| format!("json parse: {}", e))?;
+        let entries = v["entries"].as_array().ok_or("missing entries")?;
+        let all_output: String = entries
+            .iter()
+            .filter_map(|e| e["output"].as_str())
+            .collect();
+        assert!(
+            all_output.contains("goodbye"),
+            "EXIT trap should fire at session end: {:?}",
+            entries
         );
         Ok(())
     }

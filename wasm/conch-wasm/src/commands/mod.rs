@@ -134,7 +134,7 @@ pub fn dispatch(shell: &mut Shell, cmd: &str, args: &[String], stdin: Option<&st
         "history" => plain(shell.cmd_history(args)),
 
         // Script execution
-        "bash" | "sh" => plain(shell.cmd_bash(args)),
+        "bash" | "sh" | "conch" => plain(shell.cmd_bash(args)),
         "source" | "." => shell.cmd_source(args),
 
         // User management
@@ -356,6 +356,7 @@ pub fn dispatch_no_functions(
             || cmd == "dirs"
             || cmd == "bash"
             || cmd == "sh"
+            || cmd == "conch"
             || cmd == "source"
             || cmd == "."
             || cmd == "useradd"
@@ -475,6 +476,7 @@ pub const BUILTINS: &[&str] = &[
     "dirs", // Script execution
     "bash",
     "sh",
+    "conch",
     "source",
     ".", // User management
     "useradd",

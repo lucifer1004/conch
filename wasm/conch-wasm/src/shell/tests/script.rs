@@ -60,6 +60,36 @@ fn sh_missing_script() {
 }
 
 // ---------------------------------------------------------------------------
+// conch (self-invocation, equivalent to bash/sh)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn conch_runs_script() {
+    let mut s = shell_with_files(serde_json::json!({
+        "run.sh": { "content": "echo fromconch\n", "mode": 755 }
+    }));
+    let (out, code, _) = s.run_line("conch run.sh");
+    assert_eq!(code, 0);
+    assert_eq!(out, "fromconch\n");
+}
+
+#[test]
+fn conch_c_executes_string() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("conch -c 'echo hello'");
+    assert_eq!(code, 0);
+    assert_eq!(out, "hello\n");
+}
+
+#[test]
+fn conch_c_is_isolated() {
+    let mut s = shell();
+    s.run_line("conch -c 'export LEAK=yes'");
+    let (out, _, _) = s.run_line("echo ${LEAK:-unset}");
+    assert_eq!(out, "unset\n");
+}
+
+// ---------------------------------------------------------------------------
 // bash -c
 // ---------------------------------------------------------------------------
 
@@ -706,7 +736,7 @@ fn subshell_trap_does_not_leak() {
 fn break_outside_loop_errors() {
     let mut s = shell();
     let (out, code) = s.run_script("break");
-    assert!(out.contains("only meaningful in a loop"), "got: {}", out);
+    assert!(out.contains("only meaningful in a "), "got: {}", out);
     assert_eq!(code, 1);
 }
 
@@ -714,7 +744,7 @@ fn break_outside_loop_errors() {
 fn continue_outside_loop_errors() {
     let mut s = shell();
     let (out, code) = s.run_script("continue");
-    assert!(out.contains("only meaningful in a loop"), "got: {}", out);
+    assert!(out.contains("only meaningful in a "), "got: {}", out);
     assert_eq!(code, 1);
 }
 
@@ -746,7 +776,7 @@ fn return_in_source_is_valid() {
 fn break_in_function_without_loop_errors() {
     let mut s = shell();
     let (out, _) = s.run_script("f() { echo before; break; echo after; }\nf\necho done");
-    assert!(out.contains("only meaningful in a loop"), "got: {}", out);
+    assert!(out.contains("only meaningful in a "), "got: {}", out);
     assert!(
         out.contains("done"),
         "should continue after function: {}",
