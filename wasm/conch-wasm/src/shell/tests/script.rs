@@ -90,6 +90,41 @@ fn conch_c_is_isolated() {
 }
 
 // ---------------------------------------------------------------------------
+// Nested bash
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nested_bash_c() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("bash -c 'bash -c \"echo nested\"'");
+    assert_eq!(code, 0);
+    assert_eq!(out, "nested\n");
+}
+
+#[test]
+fn nested_bash_script_calls_script() {
+    let mut s = shell_with_files(serde_json::json!({
+        "a.sh": { "content": "bash b.sh", "mode": 755 },
+        "b.sh": { "content": "echo from_b", "mode": 755 }
+    }));
+    let (out, code, _) = s.run_line("bash a.sh");
+    assert_eq!(code, 0);
+    assert_eq!(out, "from_b\n");
+}
+
+#[test]
+fn nested_bash_isolation() {
+    let mut s = shell();
+    // $X in double quotes expands in the outer bash context where X=inner — correct bash behavior
+    let (out, code, _) = s.run_line("bash -c 'export X=inner; bash -c \"echo $X\"'");
+    assert_eq!(code, 0);
+    assert_eq!(out, "inner\n");
+    // But the parent shell should NOT see X leaked from either level
+    let (out2, _, _) = s.run_line("echo ${X:-unset}");
+    assert_eq!(out2, "unset\n");
+}
+
+// ---------------------------------------------------------------------------
 // bash -c
 // ---------------------------------------------------------------------------
 
