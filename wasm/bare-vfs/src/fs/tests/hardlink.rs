@@ -6,8 +6,8 @@ use super::*;
 fn hard_link_creates_second_name() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/a.txt", "hello")?;
-    fs.hard_link("/a.txt", "/b.txt").unwrap();
-    assert_eq!(fs.read_to_string("/b.txt").unwrap(), "hello");
+    fs.hard_link("/a.txt", "/b.txt")?;
+    assert_eq!(fs.read_to_string("/b.txt")?, "hello");
     Ok(())
 }
 
@@ -15,9 +15,9 @@ fn hard_link_creates_second_name() -> Result<(), VfsError> {
 fn hard_link_append_visible_through_both() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/a.txt", "hello")?;
-    fs.hard_link("/a.txt", "/b.txt").unwrap();
-    fs.append("/a.txt", b" world").unwrap();
-    assert_eq!(fs.read_to_string("/b.txt").unwrap(), "hello world");
+    fs.hard_link("/a.txt", "/b.txt")?;
+    fs.append("/a.txt", b" world")?;
+    assert_eq!(fs.read_to_string("/b.txt")?, "hello world");
     Ok(())
 }
 
@@ -25,9 +25,9 @@ fn hard_link_append_visible_through_both() -> Result<(), VfsError> {
 fn hard_link_shares_metadata() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/a.txt", "x")?;
-    fs.hard_link("/a.txt", "/b.txt").unwrap();
-    fs.set_mode("/a.txt", 0o755).unwrap();
-    assert_eq!(fs.metadata("/b.txt").unwrap().mode(), 0o755);
+    fs.hard_link("/a.txt", "/b.txt")?;
+    fs.set_mode("/a.txt", 0o755)?;
+    assert_eq!(fs.metadata("/b.txt")?.mode(), 0o755);
     Ok(())
 }
 
@@ -35,10 +35,10 @@ fn hard_link_shares_metadata() -> Result<(), VfsError> {
 fn hard_link_nlink_increments() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/a.txt", "x")?;
-    assert_eq!(fs.metadata("/a.txt").unwrap().nlink(), 1);
-    fs.hard_link("/a.txt", "/b.txt").unwrap();
-    assert_eq!(fs.metadata("/a.txt").unwrap().nlink(), 2);
-    assert_eq!(fs.metadata("/b.txt").unwrap().nlink(), 2);
+    assert_eq!(fs.metadata("/a.txt")?.nlink(), 1);
+    fs.hard_link("/a.txt", "/b.txt")?;
+    assert_eq!(fs.metadata("/a.txt")?.nlink(), 2);
+    assert_eq!(fs.metadata("/b.txt")?.nlink(), 2);
     Ok(())
 }
 
@@ -46,18 +46,19 @@ fn hard_link_nlink_increments() -> Result<(), VfsError> {
 fn hard_link_remove_decrements_nlink() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/a.txt", "x")?;
-    fs.hard_link("/a.txt", "/b.txt").unwrap();
+    fs.hard_link("/a.txt", "/b.txt")?;
     fs.remove("/a.txt");
-    assert_eq!(fs.metadata("/b.txt").unwrap().nlink(), 1);
-    assert_eq!(fs.read_to_string("/b.txt").unwrap(), "x");
+    assert_eq!(fs.metadata("/b.txt")?.nlink(), 1);
+    assert_eq!(fs.read_to_string("/b.txt")?, "x");
     Ok(())
 }
 
 #[test]
-fn hard_link_to_dir_fails() {
+fn hard_link_to_dir_fails() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir("/d").unwrap();
+    fs.create_dir("/d")?;
     assert!(fs.hard_link("/d", "/d2").is_err());
+    Ok(())
 }
 
 #[test]
@@ -79,11 +80,8 @@ fn hard_link_not_found() {
 fn hard_link_same_ino() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/a", "x")?;
-    fs.hard_link("/a", "/b").unwrap();
-    assert_eq!(
-        fs.metadata("/a").unwrap().ino(),
-        fs.metadata("/b").unwrap().ino()
-    );
+    fs.hard_link("/a", "/b")?;
+    assert_eq!(fs.metadata("/a")?.ino(), fs.metadata("/b")?.ino());
     Ok(())
 }
 
@@ -91,15 +89,12 @@ fn hard_link_same_ino() -> Result<(), VfsError> {
 fn hard_link_write_visible_through_both() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/a.txt", "original")?;
-    fs.hard_link("/a.txt", "/b.txt").unwrap();
+    fs.hard_link("/a.txt", "/b.txt")?;
     // Overwrite via write() — should update in-place, preserving the hard link
     fs.write("/a.txt", "updated")?;
-    assert_eq!(fs.read_to_string("/b.txt").unwrap(), "updated");
+    assert_eq!(fs.read_to_string("/b.txt")?, "updated");
     // Both should still share the same inode
-    assert_eq!(
-        fs.metadata("/a.txt").unwrap().ino(),
-        fs.metadata("/b.txt").unwrap().ino()
-    );
-    assert_eq!(fs.metadata("/a.txt").unwrap().nlink(), 2);
+    assert_eq!(fs.metadata("/a.txt")?.ino(), fs.metadata("/b.txt")?.ino());
+    assert_eq!(fs.metadata("/a.txt")?.nlink(), 2);
     Ok(())
 }

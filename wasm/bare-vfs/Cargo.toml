@@ -8,6 +8,9 @@ keywords = ["vfs", "filesystem", "wasm", "no_std", "virtual"]
 categories = ["filesystem", "no-std", "wasm"]
 include = ["src/**", "README.md", "LICENSE-*"]
 
+[lints]
+workspace = true
+
 [features]
 default = []
 std = []

@@ -16,7 +16,7 @@
 //! fs.write("/src/main.rs", "fn main() {}");
 //!
 //! assert!(fs.is_file("/src/main.rs"));
-//! assert_eq!(fs.read_to_string("/src/main.rs").unwrap(), "fn main() {}");
+//! assert_eq!(fs.read_to_string("/src/main.rs"), Ok("fn main() {}"));
 //! ```
 
 #![no_std]

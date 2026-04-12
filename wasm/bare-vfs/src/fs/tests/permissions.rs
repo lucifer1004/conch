@@ -9,8 +9,8 @@ use std::io::Write as _;
 fn chown_changes_ownership() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/f.txt", "data")?;
-    fs.chown("/f.txt", 1000, 2000).unwrap();
-    let m = fs.metadata("/f.txt").unwrap();
+    fs.chown("/f.txt", 1000, 2000)?;
+    let m = fs.metadata("/f.txt")?;
     assert_eq!(m.uid(), 1000);
     assert_eq!(m.gid(), 2000);
     Ok(())
@@ -20,8 +20,8 @@ fn chown_changes_ownership() -> Result<(), VfsError> {
 fn chown_directory() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.create_dir_all("/d")?;
-    fs.chown("/d", 500, 500).unwrap();
-    let m = fs.metadata("/d").unwrap();
+    fs.chown("/d", 500, 500)?;
+    let m = fs.metadata("/d")?;
     assert_eq!(m.uid(), 500);
     assert_eq!(m.gid(), 500);
     Ok(())
@@ -41,7 +41,7 @@ fn permission_owner_bits() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     // Create file owned by uid=1000, readable by owner only (0o400)
     fs.write_with_mode("/f.txt", "data", 0o400)?;
-    fs.chown("/f.txt", 1000, 2000).unwrap();
+    fs.chown("/f.txt", 1000, 2000)?;
 
     // As owner: read allowed
     fs.set_current_user(1000, 9999);
@@ -68,7 +68,7 @@ fn permission_group_bits() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     // Readable by group only (0o040)
     fs.write_with_mode("/f.txt", "data", 0o040)?;
-    fs.chown("/f.txt", 1000, 2000).unwrap();
+    fs.chown("/f.txt", 1000, 2000)?;
 
     // Owner but not group: owner bits empty
     fs.set_current_user(1000, 9999);
@@ -95,7 +95,7 @@ fn permission_other_bits() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     // World-readable (0o004)
     fs.write_with_mode("/f.txt", "data", 0o004)?;
-    fs.chown("/f.txt", 1000, 2000).unwrap();
+    fs.chown("/f.txt", 1000, 2000)?;
 
     // Owner: owner bits empty
     fs.set_current_user(1000, 9999);
@@ -132,7 +132,7 @@ fn root_bypasses_permissions() -> Result<(), VfsError> {
 fn supplementary_gids() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write_with_mode("/f.txt", "data", 0o040)?;
-    fs.chown("/f.txt", 1000, 2000).unwrap();
+    fs.chown("/f.txt", 1000, 2000)?;
 
     // User 9999, primary gid 9999, supplementary gid 2000
     fs.set_current_user(9999, 9999);
@@ -145,27 +145,27 @@ fn supplementary_gids() -> Result<(), VfsError> {
 fn new_files_inherit_current_user() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     // Make root world-writable so non-root user can create files in it
-    fs.set_mode("/", 0o777).unwrap();
+    fs.set_mode("/", 0o777)?;
     fs.set_current_user(1000, 2000);
 
     fs.write("/f.txt", "data")?;
-    let m = fs.metadata("/f.txt").unwrap();
+    let m = fs.metadata("/f.txt")?;
     assert_eq!(m.uid(), 1000);
     assert_eq!(m.gid(), 2000);
 
     fs.create_dir_all("/d")?;
-    let md = fs.metadata("/d").unwrap();
+    let md = fs.metadata("/d")?;
     assert_eq!(md.uid(), 1000);
     assert_eq!(md.gid(), 2000);
 
     fs.touch("/t.txt")?;
-    let mt = fs.metadata("/t.txt").unwrap();
+    let mt = fs.metadata("/t.txt")?;
     assert_eq!(mt.uid(), 1000);
     assert_eq!(mt.gid(), 2000);
 
-    fs.symlink("/f.txt", "/link").unwrap();
+    fs.symlink("/f.txt", "/link")?;
     // symlink_metadata to get the symlink's own uid/gid
-    let ms = fs.symlink_metadata("/link").unwrap();
+    let ms = fs.symlink_metadata("/link")?;
     assert_eq!(ms.uid(), 1000);
     assert_eq!(ms.gid(), 2000);
     Ok(())
@@ -175,10 +175,12 @@ fn new_files_inherit_current_user() -> Result<(), VfsError> {
 fn entryref_has_uid_gid() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     // Make root world-writable so non-root user can create files in it
-    fs.set_mode("/", 0o777).unwrap();
+    fs.set_mode("/", 0o777)?;
     fs.set_current_user(42, 99);
     fs.write("/f.txt", "hello")?;
-    let e = fs.get("/f.txt").unwrap();
+    let e = fs
+        .get("/f.txt")
+        .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
     assert_eq!(e.uid(), 42);
     assert_eq!(e.gid(), 99);
     Ok(())
@@ -215,7 +217,7 @@ fn umask_affects_write() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.set_umask(0o077);
     fs.write("/a", "hello")?;
-    assert_eq!(fs.metadata("/a").unwrap().mode(), 0o600);
+    assert_eq!(fs.metadata("/a")?.mode(), 0o600);
     Ok(())
 }
 
@@ -224,16 +226,17 @@ fn umask_affects_write_with_mode() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.set_umask(0o077);
     fs.write_with_mode("/a", "hello", 0o755)?;
-    assert_eq!(fs.metadata("/a").unwrap().mode(), 0o700);
+    assert_eq!(fs.metadata("/a")?.mode(), 0o700);
     Ok(())
 }
 
 #[test]
-fn umask_affects_create_dir() {
+fn umask_affects_create_dir() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.set_umask(0o077);
-    fs.create_dir("/d").unwrap();
-    assert_eq!(fs.metadata("/d").unwrap().mode(), 0o700);
+    fs.create_dir("/d")?;
+    assert_eq!(fs.metadata("/d")?.mode(), 0o700);
+    Ok(())
 }
 
 #[test]
@@ -241,8 +244,8 @@ fn umask_affects_create_dir_all() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.set_umask(0o077);
     fs.create_dir_all("/a/b/c")?;
-    assert_eq!(fs.metadata("/a").unwrap().mode(), 0o700);
-    assert_eq!(fs.metadata("/a/b/c").unwrap().mode(), 0o700);
+    assert_eq!(fs.metadata("/a")?.mode(), 0o700);
+    assert_eq!(fs.metadata("/a/b/c")?.mode(), 0o700);
     Ok(())
 }
 
@@ -251,7 +254,7 @@ fn umask_affects_touch() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.set_umask(0o077);
     fs.touch("/new")?;
-    assert_eq!(fs.metadata("/new").unwrap().mode(), 0o600);
+    assert_eq!(fs.metadata("/new")?.mode(), 0o600);
     Ok(())
 }
 
@@ -260,8 +263,8 @@ fn umask_affects_copy() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/src", "data")?;
     fs.set_umask(0o077);
-    fs.copy("/src", "/dst").unwrap();
-    assert_eq!(fs.metadata("/dst").unwrap().mode(), 0o600);
+    fs.copy("/src", "/dst")?;
+    assert_eq!(fs.metadata("/dst")?.mode(), 0o600);
     Ok(())
 }
 
@@ -270,9 +273,9 @@ fn umask_default_preserves_644_755() -> Result<(), VfsError> {
     // Default umask 0o022 doesn't change 0o644 or 0o755
     let mut fs = MemFs::new();
     fs.write("/f", "x")?;
-    assert_eq!(fs.metadata("/f").unwrap().mode(), 0o644);
-    fs.create_dir("/d").unwrap();
-    assert_eq!(fs.metadata("/d").unwrap().mode(), 0o755);
+    assert_eq!(fs.metadata("/f")?.mode(), 0o644);
+    fs.create_dir("/d")?;
+    assert_eq!(fs.metadata("/d")?.mode(), 0o755);
     Ok(())
 }
 
@@ -283,7 +286,7 @@ fn traverse_requires_dir_execute() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.create_dir_all("/a/b")?;
     fs.write("/a/b/file", "data")?;
-    fs.set_mode("/a", 0o644).unwrap(); // remove execute from /a
+    fs.set_mode("/a", 0o644)?; // remove execute from /a
     fs.set_current_user(1000, 1000);
     assert!(fs.read("/a/b/file").is_err()); // can't traverse /a without execute
     Ok(())
@@ -294,19 +297,26 @@ fn traverse_dir_execute_root_bypass() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.create_dir_all("/a/b")?;
     fs.write("/a/b/file", "data")?;
-    fs.set_mode("/a", 0o000).unwrap();
+    fs.set_mode("/a", 0o000)?;
     // uid=0 (root) bypasses permission checks
     assert!(fs.read("/a/b/file").is_ok());
     Ok(())
 }
 
 #[test]
-fn symlink_loop_returns_too_many_symlinks_from_traverse() {
+fn symlink_loop_returns_too_many_symlinks_from_traverse() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.symlink("/b", "/a").unwrap();
-    fs.symlink("/a", "/b").unwrap();
-    let err = fs.read("/a").unwrap_err();
+    fs.symlink("/b", "/a")?;
+    fs.symlink("/a", "/b")?;
+    let err = match fs.read("/a") {
+        Err(e) => e,
+        Ok(_) => {
+            assert!(false, "expected TooManySymlinks error");
+            return Ok(());
+        }
+    };
     assert_eq!(*err.kind(), VfsErrorKind::TooManySymlinks);
+    Ok(())
 }
 
 // -- access() tests --------------------------------------------------------
@@ -387,7 +397,7 @@ fn set_mode_requires_owner_or_root() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/f", "data")?;
     // As root, change owner to 1000
-    fs.chown("/f", 1000, 1000).unwrap();
+    fs.chown("/f", 1000, 1000)?;
     // As a different user (2000), set_mode should fail
     fs.set_current_user(2000, 2000);
     assert_eq!(
@@ -410,7 +420,7 @@ fn chown_change_uid_requires_root() -> Result<(), VfsError> {
     // Root can change owner
     fs.set_current_user(0, 0);
     assert!(fs.chown("/f", 2000, 2000).is_ok());
-    let m = fs.metadata("/f").unwrap();
+    let m = fs.metadata("/f")?;
     assert_eq!(m.uid(), 2000);
     assert_eq!(m.gid(), 2000);
     Ok(())
@@ -420,12 +430,12 @@ fn chown_change_uid_requires_root() -> Result<(), VfsError> {
 fn chown_owner_can_change_group_to_own_group() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/f", "data")?;
-    fs.chown("/f", 1000, 1000).unwrap(); // root sets owner
+    fs.chown("/f", 1000, 1000)?; // root sets owner
     fs.set_current_user(1000, 1000);
     fs.add_supplementary_gid(500);
     // Owner can change gid to a group they belong to
     assert!(fs.chown("/f", 1000, 500).is_ok());
-    assert_eq!(fs.metadata("/f").unwrap().gid(), 500);
+    assert_eq!(fs.metadata("/f")?.gid(), 500);
     // Owner can change gid to their primary group
     assert!(fs.chown("/f", 1000, 1000).is_ok());
     Ok(())
@@ -435,7 +445,7 @@ fn chown_owner_can_change_group_to_own_group() -> Result<(), VfsError> {
 fn chown_owner_cannot_change_group_to_foreign_group() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/f", "data")?;
-    fs.chown("/f", 1000, 1000).unwrap();
+    fs.chown("/f", 1000, 1000)?;
     fs.set_current_user(1000, 1000);
     // Owner cannot change gid to a group they don't belong to
     assert!(fs.chown("/f", 1000, 9999).is_err());
@@ -446,7 +456,7 @@ fn chown_owner_cannot_change_group_to_foreign_group() -> Result<(), VfsError> {
 fn chown_non_owner_cannot_change_group() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/f", "data")?;
-    fs.chown("/f", 1000, 1000).unwrap();
+    fs.chown("/f", 1000, 1000)?;
     fs.set_current_user(2000, 2000); // different user
                                      // Not the file owner — cannot change anything
     assert!(fs.chown("/f", 1000, 2000).is_err());
@@ -458,12 +468,12 @@ fn chown_non_owner_cannot_change_group() -> Result<(), VfsError> {
 #[test]
 fn read_dir_requires_read_permission() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir("/d").unwrap();
+    fs.create_dir("/d")?;
     fs.write("/d/f", "x")?;
     // As root, set owner and mode (exec-only, no read)
-    fs.chown("/d", 1000, 1000).unwrap();
-    fs.set_mode("/d", 0o100).unwrap(); // execute only, no read
-                                       // As owner with no read bit, read_dir should fail
+    fs.chown("/d", 1000, 1000)?;
+    fs.set_mode("/d", 0o100)?; // execute only, no read
+                               // As owner with no read bit, read_dir should fail
     fs.set_current_user(1000, 1000);
     assert_eq!(
         fs.read_dir("/d"),
@@ -475,10 +485,10 @@ fn read_dir_requires_read_permission() -> Result<(), VfsError> {
 #[test]
 fn read_dir_iter_requires_read_permission() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir("/d").unwrap();
+    fs.create_dir("/d")?;
     fs.write("/d/f", "x")?;
-    fs.chown("/d", 1000, 1000).unwrap();
-    fs.set_mode("/d", 0o100).unwrap(); // execute only
+    fs.chown("/d", 1000, 1000)?;
+    fs.set_mode("/d", 0o100)?; // execute only
     fs.set_current_user(1000, 1000);
     assert_eq!(
         fs.read_dir_iter("/d").map(|_| ()),
@@ -490,10 +500,10 @@ fn read_dir_iter_requires_read_permission() -> Result<(), VfsError> {
 #[test]
 fn read_dir_root_bypasses_read_permission() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir("/d").unwrap();
+    fs.create_dir("/d")?;
     fs.write("/d/f", "x")?;
-    fs.set_mode("/d", 0o000).unwrap(); // no permissions at all
-                                       // root can still read directory
+    fs.set_mode("/d", 0o000)?; // no permissions at all
+                               // root can still read directory
     assert!(fs.read_dir("/d").is_ok());
     Ok(())
 }
@@ -502,13 +512,13 @@ fn read_dir_root_bypasses_read_permission() -> Result<(), VfsError> {
 
 #[cfg(feature = "std")]
 #[test]
-fn open_write_only_succeeds_without_read_perm() {
+fn open_write_only_succeeds_without_read_perm() -> Result<(), VfsError> {
     use crate::open_options::OpenOptions;
     let mut fs = MemFs::new();
-    fs.write("/f", "data").unwrap();
+    fs.write("/f", "data")?;
     // As root, set owner and mode (write-only for owner)
-    fs.chown("/f", 1000, 1000).unwrap();
-    fs.set_mode("/f", 0o200).unwrap(); // write-only for owner
+    fs.chown("/f", 1000, 1000)?;
+    fs.set_mode("/f", 0o200)?; // write-only for owner
     fs.set_current_user(1000, 1000);
     // Write-only open should succeed (no read permission needed)
     let handle = OpenOptions::new().write(true).open(&mut fs, "/f");
@@ -516,22 +526,24 @@ fn open_write_only_succeeds_without_read_perm() {
         handle.is_ok(),
         "write-only open should succeed without read perm"
     );
+    Ok(())
 }
 
 #[cfg(feature = "std")]
 #[test]
-fn open_read_only_fails_without_read_perm() {
+fn open_read_only_fails_without_read_perm() -> Result<(), VfsError> {
     use crate::open_options::OpenOptions;
     let mut fs = MemFs::new();
-    fs.write("/f", "data").unwrap();
-    fs.chown("/f", 1000, 1000).unwrap();
-    fs.set_mode("/f", 0o200).unwrap(); // write-only
+    fs.write("/f", "data")?;
+    fs.chown("/f", 1000, 1000)?;
+    fs.set_mode("/f", 0o200)?; // write-only
     fs.set_current_user(1000, 1000);
     let handle = OpenOptions::new().read(true).open(&mut fs, "/f");
     assert_eq!(
         handle.map(|_| ()),
         Err(VfsErrorKind::PermissionDenied.into())
     );
+    Ok(())
 }
 
 // -- Bug 4: create_dir_all() follows symlinks in intermediate components ---
@@ -539,8 +551,8 @@ fn open_read_only_fails_without_read_perm() {
 #[test]
 fn create_dir_all_follows_symlinks() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir("/real").unwrap();
-    fs.symlink("/real", "/link").unwrap();
+    fs.create_dir("/real")?;
+    fs.symlink("/real", "/link")?;
     fs.create_dir_all("/link/sub/deep")?;
     assert!(fs.is_dir("/real/sub/deep"), "/real/sub/deep should exist");
     assert!(
@@ -556,11 +568,11 @@ fn create_dir_all_follows_symlinks() -> Result<(), VfsError> {
 fn write_respects_file_permission() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/f", "original")?;
-    fs.chown("/f", 1000, 1000).unwrap();
-    fs.set_mode("/f", 0o444).unwrap(); // read-only
+    fs.chown("/f", 1000, 1000)?;
+    fs.set_mode("/f", 0o444)?; // read-only
     fs.set_current_user(2000, 2000); // different non-root user
     assert!(fs.write("/f", "hacked").is_err());
-    assert_eq!(fs.read_to_string("/f").unwrap(), "original"); // unchanged
+    assert_eq!(fs.read_to_string("/f")?, "original"); // unchanged
     Ok(())
 }
 
@@ -568,11 +580,11 @@ fn write_respects_file_permission() -> Result<(), VfsError> {
 fn write_with_mode_respects_file_permission() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write_with_mode("/f", "original", 0o444)?;
-    fs.chown("/f", 1000, 1000).unwrap();
+    fs.chown("/f", 1000, 1000)?;
     fs.set_current_user(2000, 2000);
     // write_with_mode on read-only file as non-owner should fail (or be ignored)
     let _ = fs.write_with_mode("/f", "hacked", 0o644);
-    assert_eq!(fs.read_to_string("/f").unwrap(), "original"); // unchanged
+    assert_eq!(fs.read_to_string("/f")?, "original"); // unchanged
     Ok(())
 }
 
@@ -582,7 +594,7 @@ fn write_root_bypasses_file_permission() -> Result<(), VfsError> {
     fs.write_with_mode("/f", "original", 0o444)?;
     // uid=0 (root) can still overwrite
     fs.write("/f", "updated")?;
-    assert_eq!(fs.read_to_string("/f").unwrap(), "updated");
+    assert_eq!(fs.read_to_string("/f")?, "updated");
     Ok(())
 }
 
@@ -591,8 +603,8 @@ fn write_root_bypasses_file_permission() -> Result<(), VfsError> {
 #[test]
 fn cannot_create_file_in_readonly_dir() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir("/d").unwrap();
-    fs.set_mode("/d", 0o555).unwrap(); // read+exec, no write
+    fs.create_dir("/d")?;
+    fs.set_mode("/d", 0o555)?; // read+exec, no write
     fs.set_current_user(1000, 1000);
     assert!(fs.write("/d/newfile", "data").is_err());
     assert!(!fs.exists("/d/newfile")); // creation should fail
@@ -602,9 +614,9 @@ fn cannot_create_file_in_readonly_dir() -> Result<(), VfsError> {
 #[test]
 fn cannot_remove_from_readonly_dir() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir("/d").unwrap();
+    fs.create_dir("/d")?;
     fs.write("/d/f", "data")?;
-    fs.set_mode("/d", 0o555).unwrap();
+    fs.set_mode("/d", 0o555)?;
     fs.set_current_user(1000, 1000);
     assert!(fs.remove("/d/f").is_none()); // should fail
     assert!(fs.exists("/d/f")); // still there
@@ -612,19 +624,20 @@ fn cannot_remove_from_readonly_dir() -> Result<(), VfsError> {
 }
 
 #[test]
-fn cannot_symlink_in_readonly_dir() {
+fn cannot_symlink_in_readonly_dir() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir("/d").unwrap();
-    fs.set_mode("/d", 0o555).unwrap();
+    fs.create_dir("/d")?;
+    fs.set_mode("/d", 0o555)?;
     fs.set_current_user(1000, 1000);
     assert!(fs.symlink("/target", "/d/link").is_err());
+    Ok(())
 }
 
 #[test]
 fn root_bypasses_parent_dir_write_check() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir("/d").unwrap();
-    fs.set_mode("/d", 0o555).unwrap();
+    fs.create_dir("/d")?;
+    fs.set_mode("/d", 0o555)?;
     // uid=0 (root) should still be able to write
     fs.write("/d/f", "data")?;
     assert!(fs.exists("/d/f"));
@@ -638,7 +651,7 @@ fn root_bypasses_parent_dir_write_check() -> Result<(), VfsError> {
 fn read_only_handle_rejects_write() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/f", "data")?;
-    let mut handle = fs.open("/f").unwrap();
+    let mut handle = fs.open("/f")?;
     let result = handle.write(b"nope");
     assert!(result.is_err());
     Ok(())
@@ -652,8 +665,7 @@ fn writable_handle_accepts_write() -> Result<(), VfsError> {
     let mut handle = crate::OpenOptions::new()
         .read(true)
         .write(true)
-        .open(&mut fs, "/f")
-        .unwrap();
+        .open(&mut fs, "/f")?;
     assert!(handle.write(b"ok").is_ok());
     Ok(())
 }
@@ -663,11 +675,11 @@ fn writable_handle_accepts_write() -> Result<(), VfsError> {
 fn commit_on_readonly_handle_is_noop() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/f", "original")?;
-    let handle = fs.open("/f").unwrap();
+    let handle = fs.open("/f")?;
     assert!(!handle.is_writable());
     // commit should be a no-op — content should not change
     fs.commit("/f", handle)?;
-    assert_eq!(fs.read_to_string("/f").unwrap(), "original");
+    assert_eq!(fs.read_to_string("/f")?, "original");
     Ok(())
 }
 

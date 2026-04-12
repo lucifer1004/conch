@@ -236,7 +236,10 @@ impl<'de> Deserialize<'de> for MemFs {
             if components.is_empty() {
                 continue;
             }
-            let leaf = components.last().unwrap().to_string();
+            let leaf = match components.last() {
+                Some(s) => s.to_string(),
+                None => continue,
+            };
 
             // Find the parent inode number by walking the path
             let parent_ino = if components.len() == 1 {

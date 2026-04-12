@@ -22,7 +22,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: wasm -> target
-      - run: cargo test
+      - run: cargo test --workspace
+      - run: cargo test --workspace --all-features
 
   build-wasm:
     name: Build WASM

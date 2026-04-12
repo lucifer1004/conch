@@ -2,9 +2,22 @@ use crate::ansi;
 use crate::shell::Shell;
 
 impl Shell {
-    pub fn cmd_printf(&self, args: &[String]) -> (String, i32) {
+    /// printf [-v var] format [args...]: format and print data according to a format string.
+    pub fn cmd_printf(&mut self, args: &[String]) -> (String, i32) {
         if args.is_empty() {
-            return ("printf: missing format string".into(), 1);
+            return ("printf: missing format string".into(), 2);
+        }
+        // Detect -v varname flag
+        let (assign_var, args) = if args[0] == "-v" {
+            if args.len() < 2 {
+                return ("printf: -v: missing variable name".into(), 1);
+            }
+            (Some(args[1].clone()), &args[2..])
+        } else {
+            (None, args)
+        };
+        if args.is_empty() {
+            return ("printf: missing format string".into(), 2);
         }
         let fmt = &args[0];
         let mut positional_args = args[1..].iter();
@@ -24,19 +37,114 @@ impl Shell {
                     None => output.push('\\'),
                 }
             } else if c == '%' {
+                // Collect optional flags, width, and precision
+                let mut flags = String::new();
+                let mut width_str = String::new();
+                let mut prec_str: Option<String> = None;
+
+                // Flags: -, +, space, 0, #
+                while let Some(&'-') | Some(&'+') | Some(&' ') | Some(&'0') | Some(&'#') =
+                    chars.peek()
+                {
+                    if let Some(ch) = chars.next() {
+                        flags.push(ch);
+                    }
+                }
+                // Width digits
+                while matches!(chars.peek(), Some(&c) if c.is_ascii_digit()) {
+                    if let Some(ch) = chars.next() {
+                        width_str.push(ch);
+                    }
+                }
+                // Precision: .digits
+                if chars.peek() == Some(&'.') {
+                    chars.next();
+                    let mut ps = String::new();
+                    while matches!(chars.peek(), Some(&c) if c.is_ascii_digit()) {
+                        if let Some(ch) = chars.next() {
+                            ps.push(ch);
+                        }
+                    }
+                    prec_str = Some(ps);
+                }
+
+                let left_align = flags.contains('-');
+                let zero_pad = flags.contains('0') && !left_align;
+                let width: usize = width_str.parse().unwrap_or(0);
+                let precision: Option<usize> = prec_str.as_deref().and_then(|p| p.parse().ok());
+
+                let apply_width = |s: String| -> String {
+                    if width == 0 || s.len() >= width {
+                        return s;
+                    }
+                    let pad = width - s.len();
+                    if left_align {
+                        format!("{}{}", s, " ".repeat(pad))
+                    } else if zero_pad {
+                        // For numbers: sign before zeros
+                        format!("{}{}", "0".repeat(pad), s)
+                    } else {
+                        format!("{}{}", " ".repeat(pad), s)
+                    }
+                };
+
                 match chars.next() {
                     Some('s') => {
                         let val = positional_args.next().map(|s| s.as_str()).unwrap_or("");
-                        output.push_str(val);
+                        let s = if let Some(p) = precision {
+                            val.chars().take(p).collect::<String>()
+                        } else {
+                            val.to_string()
+                        };
+                        output.push_str(&apply_width(s));
                     }
-                    Some('d') => {
+                    Some('d') | Some('i') => {
                         let val = positional_args.next().map(|s| s.as_str()).unwrap_or("0");
                         let n: i64 = val.parse().unwrap_or(0);
-                        output.push_str(&n.to_string());
+                        output.push_str(&apply_width(n.to_string()));
+                    }
+                    Some('x') => {
+                        let val = positional_args.next().map(|s| s.as_str()).unwrap_or("0");
+                        let n: i64 = val.parse().unwrap_or(0);
+                        output.push_str(&apply_width(format!("{:x}", n)));
+                    }
+                    Some('X') => {
+                        let val = positional_args.next().map(|s| s.as_str()).unwrap_or("0");
+                        let n: i64 = val.parse().unwrap_or(0);
+                        output.push_str(&apply_width(format!("{:X}", n)));
+                    }
+                    Some('o') => {
+                        let val = positional_args.next().map(|s| s.as_str()).unwrap_or("0");
+                        let n: i64 = val.parse().unwrap_or(0);
+                        output.push_str(&apply_width(format!("{:o}", n)));
+                    }
+                    Some('f') => {
+                        let val = positional_args.next().map(|s| s.as_str()).unwrap_or("0");
+                        let f: f64 = val.parse().unwrap_or(0.0);
+                        let prec = precision.unwrap_or(6);
+                        output.push_str(&apply_width(format!("{:.prec$}", f, prec = prec)));
+                    }
+                    Some('e') => {
+                        let val = positional_args.next().map(|s| s.as_str()).unwrap_or("0");
+                        let f: f64 = val.parse().unwrap_or(0.0);
+                        let prec = precision.unwrap_or(6);
+                        output.push_str(&apply_width(format_scientific(f, prec, false)));
+                    }
+                    Some('E') => {
+                        let val = positional_args.next().map(|s| s.as_str()).unwrap_or("0");
+                        let f: f64 = val.parse().unwrap_or(0.0);
+                        let prec = precision.unwrap_or(6);
+                        output.push_str(&apply_width(format_scientific(f, prec, true)));
                     }
                     Some('%') => output.push('%'),
                     Some(other) => {
                         output.push('%');
+                        output.push_str(&flags);
+                        output.push_str(&width_str);
+                        if let Some(ref ps) = prec_str {
+                            output.push('.');
+                            output.push_str(ps);
+                        }
                         output.push(other);
                     }
                     None => output.push('%'),
@@ -46,31 +154,48 @@ impl Shell {
             }
         }
 
+        if let Some(varname) = assign_var {
+            self.vars.env.insert(varname.as_str().into(), output);
+            return (String::new(), 0);
+        }
         (output, 0)
     }
 
-    pub fn cmd_echo(&self, args: &[String]) -> (String, i32) {
+    /// echo [-n] [-e]: print arguments to stdout, optionally interpreting escape sequences.
+    pub fn cmd_echo(&mut self, args: &[String]) -> (String, i32) {
         let mut interpret_escapes = false;
+        let mut no_newline = false;
         let mut skip = 0;
         for arg in args {
             match arg.as_str() {
-                "-n" => skip += 1,
+                "-n" => {
+                    no_newline = true;
+                    skip += 1;
+                }
                 "-e" => {
                     interpret_escapes = true;
+                    skip += 1;
+                }
+                "-en" | "-ne" => {
+                    interpret_escapes = true;
+                    no_newline = true;
                     skip += 1;
                 }
                 _ => break,
             }
         }
-        let output = args[skip..].join(" ");
+        let mut output = args[skip..].join(" ");
         if interpret_escapes {
-            (unescape(&output), 0)
-        } else {
-            (output, 0)
+            output = unescape(&output);
         }
+        if !no_newline {
+            output.push('\n');
+        }
+        (output, 0)
     }
 
-    pub fn cmd_head(&self, args: &[String], stdin: Option<&str>) -> (String, i32) {
+    /// head [-n N]: output the first N lines (default 10) of a file or stdin.
+    pub fn cmd_head(&mut self, args: &[String], stdin: Option<&str>) -> (String, i32) {
         let (n, file) = Self::parse_n_file(args, 10);
         match file {
             Some(f) => self.read_lines(&f, |lines| lines.iter().take(n).cloned().collect(), "head"),
@@ -81,7 +206,8 @@ impl Shell {
         }
     }
 
-    pub fn cmd_tail(&self, args: &[String], stdin: Option<&str>) -> (String, i32) {
+    /// tail [-n N]: output the last N lines (default 10) of a file or stdin.
+    pub fn cmd_tail(&mut self, args: &[String], stdin: Option<&str>) -> (String, i32) {
         let (n, file) = Self::parse_n_file(args, 10);
         match file {
             Some(f) => self.read_lines(
@@ -100,7 +226,8 @@ impl Shell {
         }
     }
 
-    pub fn cmd_wc(&self, args: &[String], stdin: Option<&str>) -> (String, i32) {
+    /// wc [-l] [-w] [-c] [-m]: count lines, words, bytes, or characters in a file or stdin.
+    pub fn cmd_wc(&mut self, args: &[String], stdin: Option<&str>) -> (String, i32) {
         let mut line_only = false;
         let mut word_only = false;
         let mut char_only = false;
@@ -148,23 +275,47 @@ impl Shell {
             return (format_counts(input, None), 0);
         }
         let mut out = Vec::new();
+        let mut total_lines = 0usize;
+        let mut total_words = 0usize;
+        let mut total_bytes = 0usize;
         for arg in &file_args {
             let path = self.resolve(arg);
             match self.fs.read_to_string(&path) {
                 Ok(c) => {
+                    total_lines += c.matches('\n').count();
+                    total_words += c.split_whitespace().count();
+                    total_bytes += c.len();
                     out.push(format_counts(c, Some(arg)));
                 }
                 Err(e) => return (format!("wc: {}: {}", arg, e), 1),
             }
         }
+        if file_args.len() > 1 {
+            // Append total line
+            let mut parts = Vec::new();
+            if show_all || line_only {
+                parts.push(format!("  {}", total_lines));
+            }
+            if show_all || word_only {
+                parts.push(format!("  {}", total_words));
+            }
+            if show_all || char_only {
+                parts.push(format!("  {}", total_bytes));
+            }
+            parts.push(" total".to_string());
+            out.push(parts.join(""));
+        }
         (out.join("\n"), 0)
     }
 
-    pub fn cmd_grep(&self, args: &[String], stdin: Option<&str>) -> (String, i32) {
+    /// grep [-E] [-i] [-v] [-n] [-c] [-l] [-o] [-q] [-w] [-A N] [-B N] [-C N]: search for patterns in files or stdin.
+    pub fn cmd_grep(&mut self, args: &[String], stdin: Option<&str>) -> (String, i32) {
         let mut case_insensitive = false;
         let mut line_numbers = false;
         let mut invert = false;
         let mut count_only = false;
+        let mut after_ctx: Option<usize> = None;
+        let mut before_ctx: Option<usize> = None;
         let mut positional = Vec::new();
 
         let mut parser = lexopt::Parser::from_args(args.iter().cloned());
@@ -174,6 +325,27 @@ impl Shell {
                 Ok(Some(lexopt::Arg::Short('n'))) => line_numbers = true,
                 Ok(Some(lexopt::Arg::Short('v'))) => invert = true,
                 Ok(Some(lexopt::Arg::Short('c'))) => count_only = true,
+                Ok(Some(lexopt::Arg::Short('A'))) => {
+                    if let Ok(val) = parser.value() {
+                        after_ctx = val.to_string_lossy().parse().ok();
+                    }
+                }
+                Ok(Some(lexopt::Arg::Short('B'))) => {
+                    if let Ok(val) = parser.value() {
+                        before_ctx = val.to_string_lossy().parse().ok();
+                    }
+                }
+                Ok(Some(lexopt::Arg::Short('C'))) => {
+                    if let Ok(val) = parser.value() {
+                        let n: Option<usize> = val.to_string_lossy().parse().ok();
+                        before_ctx = n;
+                        after_ctx = n;
+                    }
+                }
+                Ok(Some(lexopt::Arg::Long("color") | lexopt::Arg::Long("colour"))) => {
+                    // consume and ignore the value; color is controlled by shell.color
+                    let _ = parser.optional_value();
+                }
                 Ok(Some(lexopt::Arg::Value(val))) => {
                     positional.push(val.to_string_lossy().to_string())
                 }
@@ -201,9 +373,24 @@ impl Shell {
             }
         };
 
+        let has_context = after_ctx.is_some() || before_ctx.is_some();
+
         // No file args → read from stdin
         if files.is_empty() {
             let input = stdin.unwrap_or("");
+            if has_context && !count_only {
+                return self.grep_context(
+                    input,
+                    None,
+                    pattern,
+                    case_insensitive,
+                    &match_line,
+                    line_numbers,
+                    before_ctx.unwrap_or(0),
+                    after_ctx.unwrap_or(0),
+                    self.color,
+                );
+            }
             return self.grep_content(
                 input,
                 None,
@@ -212,6 +399,7 @@ impl Shell {
                 &match_line,
                 line_numbers,
                 count_only,
+                self.color,
             );
         }
 
@@ -226,15 +414,30 @@ impl Shell {
                 Err(e) => return (format!("grep: {}: {}", file, e), 2),
             };
             let prefix = if multi { Some(file.as_str()) } else { None };
-            let (out, code) = self.grep_content(
-                content,
-                prefix,
-                pattern,
-                case_insensitive,
-                &match_line,
-                line_numbers,
-                count_only,
-            );
+            let (out, code) = if has_context && !count_only {
+                self.grep_context(
+                    content,
+                    prefix,
+                    pattern,
+                    case_insensitive,
+                    &match_line,
+                    line_numbers,
+                    before_ctx.unwrap_or(0),
+                    after_ctx.unwrap_or(0),
+                    self.color,
+                )
+            } else {
+                self.grep_content(
+                    content,
+                    prefix,
+                    pattern,
+                    case_insensitive,
+                    &match_line,
+                    line_numbers,
+                    count_only,
+                    self.color,
+                )
+            };
             if code == 0 {
                 any_match = true;
             }
@@ -251,6 +454,89 @@ impl Shell {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn grep_context(
+        &self,
+        content: &str,
+        prefix: Option<&str>,
+        pattern: &str,
+        case_insensitive: bool,
+        match_fn: &dyn Fn(&str) -> bool,
+        line_numbers: bool,
+        before: usize,
+        after: usize,
+        color: bool,
+    ) -> (String, i32) {
+        let lines: Vec<&str> = content.lines().collect();
+        let total = lines.len();
+
+        // Find all matching line indices
+        let match_indices: Vec<usize> = (0..total).filter(|&i| match_fn(lines[i])).collect();
+
+        if match_indices.is_empty() {
+            return (String::new(), 1);
+        }
+
+        // Build set of line indices to include, grouped into ranges
+        // Each range is (start, end) inclusive
+        let mut ranges: Vec<(usize, usize)> = Vec::new();
+        for &mi in &match_indices {
+            let start = mi.saturating_sub(before);
+            let end = (mi + after).min(total - 1);
+            if let Some(last) = ranges.last_mut() {
+                if start <= last.1 + 1 {
+                    // Merge overlapping/adjacent ranges
+                    last.1 = last.1.max(end);
+                    continue;
+                }
+            }
+            ranges.push((start, end));
+        }
+
+        let match_set: std::collections::HashSet<usize> = match_indices.into_iter().collect();
+        let mut out = Vec::new();
+
+        for (ri, &(start, end)) in ranges.iter().enumerate() {
+            if ri > 0 {
+                out.push("--".to_string());
+            }
+            for (i, line) in lines[start..=end]
+                .iter()
+                .enumerate()
+                .map(|(j, l)| (start + j, l))
+            {
+                let is_match = match_set.contains(&i);
+                let sep = if is_match { ':' } else { '-' };
+                let mut entry = String::new();
+                if let Some(p) = prefix {
+                    if color {
+                        entry.push_str(&format!("{}{}{}", ansi::MAGENTA, p, ansi::RESET));
+                    } else {
+                        entry.push_str(p);
+                    }
+                    entry.push(sep);
+                }
+                if line_numbers {
+                    if color {
+                        entry.push_str(&format!("{}{}{}", ansi::GREEN, i + 1, ansi::RESET));
+                    } else {
+                        entry.push_str(&(i + 1).to_string());
+                    }
+                    entry.push(sep);
+                }
+                if color && is_match {
+                    entry.push_str(&ansi::highlight_matches(line, pattern, case_insensitive));
+                } else {
+                    entry.push_str(line);
+                }
+
+                out.push(entry);
+            }
+        }
+
+        (out.join("\n"), 0)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn grep_content(
         &self,
         content: &str,
@@ -260,6 +546,7 @@ impl Shell {
         match_fn: &dyn Fn(&str) -> bool,
         line_numbers: bool,
         count_only: bool,
+        color: bool,
     ) -> (String, i32) {
         let mut out = Vec::new();
         let mut count = 0;
@@ -270,14 +557,26 @@ impl Shell {
                 if !count_only {
                     let mut entry = String::new();
                     if let Some(p) = prefix {
-                        entry.push_str(&format!("{}{}{}", ansi::MAGENTA, p, ansi::RESET));
+                        if color {
+                            entry.push_str(&format!("{}{}{}", ansi::MAGENTA, p, ansi::RESET));
+                        } else {
+                            entry.push_str(p);
+                        }
                         entry.push(':');
                     }
                     if line_numbers {
-                        entry.push_str(&format!("{}{}{}", ansi::GREEN, i + 1, ansi::RESET));
+                        if color {
+                            entry.push_str(&format!("{}{}{}", ansi::GREEN, i + 1, ansi::RESET));
+                        } else {
+                            entry.push_str(&(i + 1).to_string());
+                        }
                         entry.push(':');
                     }
-                    entry.push_str(&ansi::highlight_matches(line, pattern, case_insensitive));
+                    if color {
+                        entry.push_str(&ansi::highlight_matches(line, pattern, case_insensitive));
+                    } else {
+                        entry.push_str(line);
+                    }
                     out.push(entry);
                 }
             }
@@ -296,7 +595,8 @@ impl Shell {
         }
     }
 
-    pub fn cmd_sort(&self, args: &[String], stdin: Option<&str>) -> (String, i32) {
+    /// sort [-r] [-n] [-u] [-k N] [-t SEP]: sort lines of text from a file or stdin.
+    pub fn cmd_sort(&mut self, args: &[String], stdin: Option<&str>) -> (String, i32) {
         let mut reverse = false;
         let mut numeric = false;
         let mut delimiter: Option<char> = None;
@@ -368,14 +668,19 @@ impl Shell {
         (lines.join("\n"), 0)
     }
 
-    pub fn cmd_uniq(&self, args: &[String], stdin: Option<&str>) -> (String, i32) {
+    /// uniq [-c] [-d] [-u] [-i]: filter or count adjacent duplicate lines from a file or stdin.
+    pub fn cmd_uniq(&mut self, args: &[String], stdin: Option<&str>) -> (String, i32) {
         let mut count = false;
+        let mut only_dupes = false;
+        let mut only_unique = false;
         let mut file = None;
 
         let mut parser = lexopt::Parser::from_args(args.iter().cloned());
         loop {
             match parser.next() {
                 Ok(Some(lexopt::Arg::Short('c'))) => count = true,
+                Ok(Some(lexopt::Arg::Short('d'))) => only_dupes = true,
+                Ok(Some(lexopt::Arg::Short('u'))) => only_unique = true,
                 Ok(Some(lexopt::Arg::Value(val))) => file = Some(val.to_string_lossy().to_string()),
                 Ok(Some(_)) => {}
                 Ok(None) | Err(_) => break,
@@ -396,28 +701,47 @@ impl Shell {
                 cnt += 1;
             } else {
                 if let Some(p) = prev {
-                    out.push(if count {
-                        format!("{:>7} {}", cnt, p)
+                    let include = if only_dupes {
+                        cnt > 1
+                    } else if only_unique {
+                        cnt == 1
                     } else {
-                        p.to_string()
-                    });
+                        true
+                    };
+                    if include {
+                        out.push(if count {
+                            format!("{:>7} {}", cnt, p)
+                        } else {
+                            p.to_string()
+                        });
+                    }
                 }
                 prev = Some(line);
                 cnt = 1;
             }
         }
         if let Some(p) = prev {
-            out.push(if count {
-                format!("{:>7} {}", cnt, p)
+            let include = if only_dupes {
+                cnt > 1
+            } else if only_unique {
+                cnt == 1
             } else {
-                p.to_string()
-            });
+                true
+            };
+            if include {
+                out.push(if count {
+                    format!("{:>7} {}", cnt, p)
+                } else {
+                    p.to_string()
+                });
+            }
         }
 
         (out.join("\n"), 0)
     }
 
-    pub fn cmd_cut(&self, args: &[String], stdin: Option<&str>) -> (String, i32) {
+    /// cut [-d DELIM] [-f FIELDS] [-c CHARS]: extract selected fields or characters from each line.
+    pub fn cmd_cut(&mut self, args: &[String], stdin: Option<&str>) -> (String, i32) {
         let mut delimiter = '\t';
         let mut fields = Vec::new();
         let mut file = None;
@@ -466,7 +790,8 @@ impl Shell {
         (out.join("\n"), 0)
     }
 
-    pub fn cmd_tr(&self, _args: &[String], stdin: Option<&str>) -> (String, i32) {
+    /// tr [-d] [-s] SET1 [SET2]: translate or delete characters from stdin.
+    pub fn cmd_tr(&mut self, _args: &[String], stdin: Option<&str>) -> (String, i32) {
         let mut delete = false;
         let mut positional = Vec::new();
 
@@ -512,7 +837,8 @@ impl Shell {
         (result, 0)
     }
 
-    pub fn cmd_rev(&self, args: &[String], stdin: Option<&str>) -> (String, i32) {
+    /// rev: reverse the characters of each line from a file or stdin.
+    pub fn cmd_rev(&mut self, args: &[String], stdin: Option<&str>) -> (String, i32) {
         let input = match args.first().filter(|a| !a.starts_with('-')) {
             Some(f) => match self.resolve_input(Some(f), stdin) {
                 Ok(s) => s,
@@ -525,38 +851,104 @@ impl Shell {
         (reversed.join("\n"), 0)
     }
 
-    pub fn cmd_seq(&self, args: &[String]) -> (String, i32) {
-        let nums: Vec<i64> = args.iter().filter_map(|a| a.parse().ok()).collect();
+    /// seq [-s SEP] [-w] [FIRST [INCR]] LAST: print a sequence of numbers.
+    pub fn cmd_seq(&mut self, args: &[String]) -> (String, i32) {
+        let mut separator = "\n".to_string();
+        let mut equal_width = false;
+        let mut positional = Vec::new();
+
+        let mut parser = lexopt::Parser::from_args(args.iter().cloned());
+        loop {
+            match parser.next() {
+                Ok(Some(lexopt::Arg::Short('s'))) => {
+                    if let Ok(val) = parser.value() {
+                        separator = val.to_string_lossy().to_string();
+                    }
+                }
+                Ok(Some(lexopt::Arg::Short('w'))) => equal_width = true,
+                Ok(Some(lexopt::Arg::Value(val))) => {
+                    positional.push(val.to_string_lossy().to_string())
+                }
+                Ok(Some(_)) => {}
+                Ok(None) | Err(_) => break,
+            }
+        }
+
+        let nums: Vec<f64> = positional.iter().filter_map(|a| a.parse().ok()).collect();
         let (start, step, end) = match nums.len() {
-            1 => (1, 1, nums[0]),
-            2 => (nums[0], 1, nums[1]),
+            1 => (1.0, 1.0, nums[0]),
+            2 => (nums[0], 1.0, nums[1]),
             3 => (nums[0], nums[1], nums[2]),
             _ => return ("seq: missing operand".into(), 1),
         };
 
-        if step == 0 {
+        if step == 0.0 {
             return ("seq: zero increment".into(), 1);
         }
 
+        // Determine if we are in float mode: any positional arg contains '.'
+        let is_float = positional.iter().any(|a| a.contains('.'));
+
+        // Determine decimal places for float formatting
+        let decimal_places = if is_float {
+            positional
+                .iter()
+                .map(|a| {
+                    if let Some(dot) = a.find('.') {
+                        a.len() - dot - 1
+                    } else {
+                        0
+                    }
+                })
+                .max()
+                .unwrap_or(1)
+        } else {
+            0
+        };
+
         let mut results = Vec::new();
-        if step > 0 {
+        if step > 0.0 {
             let mut i = start;
-            while i <= end {
-                results.push(i.to_string());
+            while i <= end + f64::EPSILON * 1000.0 {
+                if is_float {
+                    results.push(format!("{:.prec$}", i, prec = decimal_places));
+                } else {
+                    results.push(format!("{}", i as i64));
+                }
                 i += step;
             }
         } else {
             let mut i = start;
-            while i >= end {
-                results.push(i.to_string());
+            while i >= end - f64::EPSILON * 1000.0 {
+                if is_float {
+                    results.push(format!("{:.prec$}", i, prec = decimal_places));
+                } else {
+                    results.push(format!("{}", i as i64));
+                }
                 i += step;
             }
         }
 
-        (results.join("\n"), 0)
+        if equal_width && !results.is_empty() {
+            let max_len = results.iter().map(|s| s.len()).max().unwrap_or(0);
+            for r in &mut results {
+                if r.len() < max_len {
+                    let pad = max_len - r.len();
+                    *r = format!("{}{}", "0".repeat(pad), r);
+                }
+            }
+        }
+
+        if separator == "\n" {
+            (results.join("\n"), 0)
+        } else {
+            // Custom separator: join with separator and no trailing separator
+            (results.join(&separator), 0)
+        }
     }
 
-    pub fn cmd_tac(&self, args: &[String], stdin: Option<&str>) -> (String, i32) {
+    /// tac: concatenate and print lines of a file or stdin in reverse order.
+    pub fn cmd_tac(&mut self, args: &[String], stdin: Option<&str>) -> (String, i32) {
         let file = args.iter().find(|a| !a.starts_with('-'));
         let input = match file {
             Some(f) => match self.resolve_input(Some(f), stdin) {
@@ -569,7 +961,8 @@ impl Shell {
         (reversed.join("\n"), 0)
     }
 
-    pub fn cmd_nl(&self, args: &[String], stdin: Option<&str>) -> (String, i32) {
+    /// nl [-b a] [-n FORMAT] [-w N]: number lines of a file or stdin.
+    pub fn cmd_nl(&mut self, args: &[String], stdin: Option<&str>) -> (String, i32) {
         // Support -b a (number all lines, the default behaviour we implement)
         let mut file = None;
         let mut i = 0;
@@ -601,7 +994,8 @@ impl Shell {
         (numbered.join("\n"), 0)
     }
 
-    pub fn cmd_paste(&self, args: &[String], stdin: Option<&str>) -> (String, i32) {
+    /// paste [-d DELIM] [-s] files...: merge lines of files side by side.
+    pub fn cmd_paste(&mut self, args: &[String], stdin: Option<&str>) -> (String, i32) {
         let mut delimiter = '\t';
         let mut files: Vec<String> = Vec::new();
 
@@ -653,11 +1047,184 @@ impl Shell {
         (out.join("\n"), 0)
     }
 
+    /// column [-t] [-s SEP]: format input into aligned columns or a table.
+    pub fn cmd_column(&mut self, args: &[String], stdin: Option<&str>) -> (String, i32) {
+        let mut table_mode = false;
+        let mut delimiter: Option<String> = None;
+        let mut files: Vec<String> = Vec::new();
+
+        let mut i = 0;
+        while i < args.len() {
+            match args[i].as_str() {
+                "-t" => {
+                    table_mode = true;
+                    i += 1;
+                }
+                "-s" if i + 1 < args.len() => {
+                    delimiter = Some(args[i + 1].clone());
+                    i += 2;
+                }
+                s if s.starts_with("-s") && s.len() > 2 => {
+                    delimiter = Some(s[2..].to_string());
+                    i += 1;
+                }
+                s if !s.starts_with('-') => {
+                    files.push(args[i].clone());
+                    i += 1;
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+
+        let input = if files.is_empty() {
+            stdin.unwrap_or("").to_string()
+        } else {
+            let mut combined = String::new();
+            for f in &files {
+                match self.resolve_input(Some(f), None) {
+                    Ok(s) => combined.push_str(&s),
+                    Err(e) => return (format!("column: {}", e), 1),
+                }
+            }
+            combined
+        };
+
+        if !table_mode {
+            // Without -t, just pass through (basic behavior)
+            return (input, 0);
+        }
+
+        // Table mode: split each line by delimiter (or whitespace), compute max column widths, pad
+        let rows: Vec<Vec<String>> = input
+            .lines()
+            .map(|line| {
+                if let Some(ref delim) = delimiter {
+                    line.split(delim.as_str()).map(|s| s.to_string()).collect()
+                } else {
+                    line.split_whitespace().map(|s| s.to_string()).collect()
+                }
+            })
+            .collect();
+
+        if rows.is_empty() {
+            return (String::new(), 0);
+        }
+
+        let num_cols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+        let mut col_widths = vec![0usize; num_cols];
+        for row in &rows {
+            for (ci, cell) in row.iter().enumerate() {
+                if cell.len() > col_widths[ci] {
+                    col_widths[ci] = cell.len();
+                }
+            }
+        }
+
+        let out_lines: Vec<String> = rows
+            .iter()
+            .map(|row| {
+                let mut parts: Vec<String> = Vec::new();
+                for (ci, width) in col_widths.iter().enumerate() {
+                    let cell = row.get(ci).map(|s| s.as_str()).unwrap_or("");
+                    if ci + 1 < num_cols {
+                        // Non-last columns: pad to full width + 2-space separator
+                        parts.push(format!("{:<width$}  ", cell, width = width));
+                    } else {
+                        // Last column: pad to full width (no trailing separator)
+                        parts.push(format!("{:<width$}", cell, width = width));
+                    }
+                }
+                parts.concat()
+            })
+            .collect();
+
+        (out_lines.join("\n"), 0)
+    }
+
+    /// xargs [-n N] cmd [args...]: build and execute commands from stdin arguments.
+    pub fn cmd_xargs(&mut self, args: &[String], stdin: Option<&str>) -> (String, i32) {
+        let mut n_per: Option<usize> = None;
+        let mut replace_str: Option<String> = None;
+        let mut cmd_and_args: Vec<String> = Vec::new();
+
+        let mut i = 0;
+        while i < args.len() {
+            match args[i].as_str() {
+                "-n" if i + 1 < args.len() => {
+                    n_per = args[i + 1].parse().ok();
+                    i += 2;
+                }
+                "-I" if i + 1 < args.len() => {
+                    replace_str = Some(args[i + 1].clone());
+                    i += 2;
+                }
+                s if s.starts_with("-I") && s.len() > 2 => {
+                    replace_str = Some(s[2..].to_string());
+                    i += 1;
+                }
+                _ => {
+                    cmd_and_args.push(args[i].clone());
+                    i += 1;
+                }
+            }
+        }
+
+        let input = stdin.unwrap_or("");
+        let tokens: Vec<String> = input.split_whitespace().map(|s| s.to_string()).collect();
+
+        let base_cmd = if cmd_and_args.is_empty() {
+            "echo".to_string()
+        } else {
+            cmd_and_args[0].clone()
+        };
+        let base_extra: Vec<String> = if cmd_and_args.len() > 1 {
+            cmd_and_args[1..].to_vec()
+        } else {
+            Vec::new()
+        };
+
+        let mut combined_output = String::new();
+
+        if let Some(repl) = replace_str {
+            // -I mode: one invocation per token, replacing repl in base_extra
+            for token in &tokens {
+                let call_args: Vec<String> =
+                    base_extra.iter().map(|a| a.replace(&repl, token)).collect();
+                let (out, _code, _) = crate::commands::dispatch(self, &base_cmd, &call_args, None);
+                combined_output.push_str(&out);
+            }
+        } else if let Some(n) = n_per {
+            // -n mode: invoke command with at most n tokens at a time
+            for chunk in tokens.chunks(n) {
+                let mut call_args = base_extra.clone();
+                call_args.extend(chunk.iter().cloned());
+                let (out, _code, _) = crate::commands::dispatch(self, &base_cmd, &call_args, None);
+                combined_output.push_str(&out);
+            }
+        } else {
+            // Default: all tokens in one invocation
+            let mut call_args = base_extra.clone();
+            call_args.extend(tokens.iter().cloned());
+            let (out, _code, _) = crate::commands::dispatch(self, &base_cmd, &call_args, None);
+            combined_output.push_str(&out);
+        }
+
+        // Strip exactly one trailing newline: plain() in dispatch will add it back.
+        // This avoids double-newlines while preserving empty-line output from echo.
+        // For multi-invocation output, intermediate newlines are preserved as-is.
+        if combined_output.ends_with('\n') && combined_output.len() > 1 {
+            combined_output.pop();
+        }
+        (combined_output, 0)
+    }
+
     // -- helpers --
 
     /// Resolve input from a file path or stdin
     pub(crate) fn resolve_input(
-        &self,
+        &mut self,
         file: Option<&str>,
         stdin: Option<&str>,
     ) -> Result<String, String> {
@@ -708,7 +1275,7 @@ impl Shell {
     }
 
     fn read_lines(
-        &self,
+        &mut self,
         filename: &str,
         transform: impl for<'a> FnOnce(&'a [&'a str]) -> Vec<&'a str>,
         cmd_name: &str,
@@ -761,4 +1328,16 @@ fn parse_field_spec(spec: &str) -> Vec<usize> {
         }
     }
     fields
+}
+
+/// Format a float in scientific notation (e.g. 3.140000e+00).
+fn format_scientific(f: f64, prec: usize, uppercase: bool) -> String {
+    if f == 0.0 {
+        let exp_char = if uppercase { 'E' } else { 'e' };
+        return format!("{:.prec$}{}{:+03}", 0.0f64, exp_char, 0i32, prec = prec);
+    }
+    let exp = f.abs().log10().floor() as i32;
+    let mantissa = f / 10f64.powi(exp);
+    let exp_char = if uppercase { 'E' } else { 'e' };
+    format!("{:.prec$}{}{:+03}", mantissa, exp_char, exp, prec = prec)
 }

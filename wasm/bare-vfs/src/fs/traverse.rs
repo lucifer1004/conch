@@ -54,7 +54,11 @@ impl MemFs {
             return Err(VfsErrorKind::NotFound.into());
         }
         if path == "/" {
-            return Ok((self.root_ino, self.inodes.get(&self.root_ino).unwrap()));
+            let root = self
+                .inodes
+                .get(&self.root_ino)
+                .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
+            return Ok((self.root_ino, root));
         }
 
         let components = split_path(path);
@@ -111,14 +115,21 @@ impl MemFs {
         }
 
         // Final: if symlink, follow it
-        let final_inode = self.inodes.get(&current_ino).unwrap();
+        let final_inode = self
+            .inodes
+            .get(&current_ino)
+            .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
         if let InodeKind::Symlink { target } = &final_inode.kind {
             let symlink_dir = crate::parent(&current_dir).unwrap_or("/");
             let resolved = Self::resolve_symlink_target(target, symlink_dir);
             return self.traverse_with_depth(&resolved, depth + 1);
         }
 
-        Ok((current_ino, self.inodes.get(&current_ino).unwrap()))
+        let inode = self
+            .inodes
+            .get(&current_ino)
+            .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
+        Ok((current_ino, inode))
     }
 
     /// Traverse to `path` WITHOUT following the final symlink component.
@@ -143,7 +154,11 @@ impl MemFs {
             return Err(VfsErrorKind::NotFound.into());
         }
         if path == "/" {
-            return Ok((self.root_ino, self.inodes.get(&self.root_ino).unwrap()));
+            let root = self
+                .inodes
+                .get(&self.root_ino)
+                .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
+            return Ok((self.root_ino, root));
         }
 
         let components = split_path(path);
@@ -199,7 +214,11 @@ impl MemFs {
             current_ino = child_ino;
         }
 
-        Ok((current_ino, self.inodes.get(&current_ino).unwrap()))
+        let inode = self
+            .inodes
+            .get(&current_ino)
+            .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
+        Ok((current_ino, inode))
     }
 
     /// Resolve all symlinks in `path` and return the final canonical path,
@@ -288,7 +307,7 @@ impl MemFs {
         if components.is_empty() {
             return None; // root has no parent
         }
-        let leaf_name = components.last().unwrap().to_string();
+        let leaf_name = components.last()?.to_string();
 
         // Build parent path
         let parent_path = if components.len() == 1 {

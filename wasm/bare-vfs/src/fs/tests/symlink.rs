@@ -7,7 +7,7 @@ use crate::error::VfsErrorKind;
 fn symlink_create_and_read_through() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/real.txt", "hello")?;
-    fs.symlink("/real.txt", "/link.txt").unwrap();
+    fs.symlink("/real.txt", "/link.txt")?;
     // is_symlink detects the link without following
     assert!(fs.is_symlink("/link.txt"));
     // reading through the link should yield the file content
@@ -23,22 +23,22 @@ fn symlink_to_directory() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.create_dir_all("/real/sub")?;
     fs.write("/real/sub/f.txt", "data")?;
-    fs.symlink("/real", "/link").unwrap();
+    fs.symlink("/real", "/link")?;
     // Traversal through link should reach the directory
     assert!(fs.is_dir("/link"));
     assert!(fs.is_file("/link/sub/f.txt"));
     assert_eq!(fs.read_to_string("/link/sub/f.txt"), Ok("data"));
     // read_dir through symlinked directory
-    let entries = fs.read_dir("/link").unwrap();
+    let entries = fs.read_dir("/link")?;
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].name, "sub");
     Ok(())
 }
 
 #[test]
-fn symlink_dangling_returns_not_found() {
+fn symlink_dangling_returns_not_found() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.symlink("/nonexistent.txt", "/dangling").unwrap();
+    fs.symlink("/nonexistent.txt", "/dangling")?;
     assert!(fs.is_symlink("/dangling"));
     // Following a dangling symlink should return NotFound
     assert_eq!(fs.read("/dangling"), Err(VfsErrorKind::NotFound.into()));
@@ -48,6 +48,7 @@ fn symlink_dangling_returns_not_found() {
     );
     // exists() follows symlinks, so dangling link returns false
     assert!(!fs.exists("/dangling"));
+    Ok(())
 }
 
 #[test]
@@ -55,9 +56,9 @@ fn symlink_chain() -> Result<(), VfsError> {
     // a -> b -> c -> real file
     let mut fs = MemFs::new();
     fs.write("/real.txt", "chained")?;
-    fs.symlink("/real.txt", "/c").unwrap();
-    fs.symlink("/c", "/b").unwrap();
-    fs.symlink("/b", "/a").unwrap();
+    fs.symlink("/real.txt", "/c")?;
+    fs.symlink("/c", "/b")?;
+    fs.symlink("/b", "/a")?;
     assert_eq!(fs.read_to_string("/a"), Ok("chained"));
     assert_eq!(fs.read_to_string("/b"), Ok("chained"));
     assert_eq!(fs.read_to_string("/c"), Ok("chained"));
@@ -65,22 +66,23 @@ fn symlink_chain() -> Result<(), VfsError> {
 }
 
 #[test]
-fn symlink_loop_returns_too_many_symlinks() {
+fn symlink_loop_returns_too_many_symlinks() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     // a -> b -> a  (loop)
-    fs.symlink("/b", "/a").unwrap();
-    fs.symlink("/a", "/b").unwrap();
+    fs.symlink("/b", "/a")?;
+    fs.symlink("/a", "/b")?;
     // Reading through a loop should fail (not panic), returning TooManySymlinks
     assert_eq!(fs.read("/a"), Err(VfsErrorKind::TooManySymlinks.into()));
     assert_eq!(fs.read("/b"), Err(VfsErrorKind::TooManySymlinks.into()));
     assert!(!fs.exists("/a"));
+    Ok(())
 }
 
 #[test]
 fn read_link_returns_target_without_following() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/real.txt", "data")?;
-    fs.symlink("/real.txt", "/link").unwrap();
+    fs.symlink("/real.txt", "/link")?;
     assert_eq!(fs.read_link("/link"), Ok("/real.txt".to_string()));
     // read_link on a non-symlink returns NotASymlink
     assert_eq!(
@@ -96,7 +98,7 @@ fn read_link_returns_target_without_following() -> Result<(), VfsError> {
 fn remove_symlink_does_not_remove_target() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/real.txt", "keep me")?;
-    fs.symlink("/real.txt", "/link").unwrap();
+    fs.symlink("/real.txt", "/link")?;
     // Remove the symlink
     let removed = fs.remove("/link");
     assert!(removed.is_some());
@@ -114,11 +116,11 @@ fn symlink_relative_resolution() -> Result<(), VfsError> {
     fs.create_dir_all("/a/b")?;
     fs.write("/a/b/real.txt", "relative")?;
     // Create a relative symlink in /a/b pointing to real.txt (same dir)
-    fs.symlink("real.txt", "/a/b/link").unwrap();
+    fs.symlink("real.txt", "/a/b/link")?;
     assert_eq!(fs.read_to_string("/a/b/link"), Ok("relative"));
     // Also test a relative symlink going up one level
     fs.write("/a/top.txt", "top")?;
-    fs.symlink("../top.txt", "/a/b/up_link").unwrap();
+    fs.symlink("../top.txt", "/a/b/up_link")?;
     assert_eq!(fs.read_to_string("/a/b/up_link"), Ok("top"));
     Ok(())
 }
@@ -129,7 +131,7 @@ fn symlink_in_intermediate_path_component() -> Result<(), VfsError> {
     fs.create_dir_all("/real_dir")?;
     fs.write("/real_dir/file.txt", "found")?;
     // /link -> /real_dir; access /link/file.txt
-    fs.symlink("/real_dir", "/link").unwrap();
+    fs.symlink("/real_dir", "/link")?;
     assert_eq!(fs.read_to_string("/link/file.txt"), Ok("found"));
     // write through symlinked directory
     fs.write("/link/new.txt", "new")?;
@@ -141,14 +143,14 @@ fn symlink_in_intermediate_path_component() -> Result<(), VfsError> {
 fn symlink_metadata_is_symlink() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/real.txt", "x")?;
-    fs.symlink("/real.txt", "/link").unwrap();
+    fs.symlink("/real.txt", "/link")?;
     // symlink_metadata does NOT follow the final symlink
-    let m = fs.symlink_metadata("/link").unwrap();
+    let m = fs.symlink_metadata("/link")?;
     assert!(m.is_symlink());
     assert!(!m.is_file());
     assert!(!m.is_dir());
     // regular metadata DOES follow it
-    let m2 = fs.metadata("/link").unwrap();
+    let m2 = fs.metadata("/link")?;
     assert!(m2.is_file());
     assert!(!m2.is_symlink());
     Ok(())
@@ -158,13 +160,17 @@ fn symlink_metadata_is_symlink() -> Result<(), VfsError> {
 fn symlink_entry_is_symlink() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/real.txt", "x")?;
-    fs.symlink("/real.txt", "/link").unwrap();
+    fs.symlink("/real.txt", "/link")?;
     // get() follows symlinks, so returns File
-    let e = fs.get("/link").unwrap();
+    let e = fs
+        .get("/link")
+        .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
     assert!(e.is_file());
     assert!(!e.is_symlink());
     // insert/remove round-trip
-    let removed = fs.remove("/link").unwrap();
+    let removed = fs
+        .remove("/link")
+        .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
     assert!(removed.is_symlink());
     Ok(())
 }

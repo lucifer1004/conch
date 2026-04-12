@@ -1,22 +1,81 @@
 use super::*;
 
+// ---------------------------------------------------------------------------
+// echo
+// ---------------------------------------------------------------------------
+
 #[test]
 fn echo_e_interprets_escapes() {
     let mut s = shell();
     let (out, code, _) = s.run_line("echo -e 'a\\nb'");
     assert_eq!(code, 0);
-    assert!(out.contains('\n'), "expected newline, got {:?}", out);
-    assert!(out.starts_with('a'), "got {:?}", out);
+    assert_eq!(out, "a\nb\n");
 }
 
 #[test]
 fn echo_n_omits_nothing_extra() {
     let mut s = shell();
-    // -n in real bash suppresses trailing newline; in our impl it's a flag
     let (out, code, _) = s.run_line("echo -n hello");
     assert_eq!(code, 0);
     assert_eq!(out, "hello");
 }
+
+#[test]
+fn echo_n_suppresses_trailing_newline() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("echo -n hello");
+    assert_eq!(code, 0);
+    assert_eq!(out, "hello");
+    let (out2, _, _) = s.run_line("echo hello");
+    assert_eq!(out2, "hello\n");
+}
+
+// ---------------------------------------------------------------------------
+// printf
+// ---------------------------------------------------------------------------
+
+#[test]
+fn printf_string_substitution() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("printf '%s world' hello");
+    assert_eq!(code, 0);
+    assert_eq!(out, "hello world");
+}
+
+#[test]
+fn printf_decimal_substitution() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("printf '%d items' 42");
+    assert_eq!(code, 0);
+    assert_eq!(out, "42 items");
+}
+
+#[test]
+fn printf_escape_newline_tab() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line(r#"printf "line1\nline2""#);
+    assert_eq!(code, 0);
+    assert_eq!(out, "line1\nline2");
+}
+
+#[test]
+fn printf_percent_literal() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("printf '100%%'");
+    assert_eq!(code, 0);
+    assert_eq!(out, "100%");
+}
+
+#[test]
+fn printf_no_args_fails() {
+    let mut s = shell();
+    let (_, code, _) = s.run_line("printf");
+    assert_eq!(code, 2);
+}
+
+// ---------------------------------------------------------------------------
+// head / tail
+// ---------------------------------------------------------------------------
 
 #[test]
 fn head_tail_take_lines_from_file() {
@@ -25,11 +84,48 @@ fn head_tail_take_lines_from_file() {
     }));
     let (h, c1, _) = s.run_line("head -n 2 rows.txt");
     assert_eq!(c1, 0);
-    assert_eq!(h, "a\nb");
+    assert_eq!(h, "a\nb\n");
     let (t, c2, _) = s.run_line("tail -n 1 rows.txt");
     assert_eq!(c2, 0);
-    assert_eq!(t, "c");
+    assert_eq!(t, "c\n");
 }
+
+#[test]
+fn head_from_stdin() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("echo 'a\nb\nc\nd\ne' | head -n 2");
+    assert_eq!(code, 0);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 2);
+}
+
+#[test]
+fn tail_from_stdin() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("echo 'a\nb\nc' | tail -n 1");
+    assert_eq!(code, 0);
+    assert_eq!(out, "c\n");
+}
+
+#[test]
+fn head_dash_n_shorthand() {
+    let mut s = shell_with_files(serde_json::json!({"f.txt": "a\nb\nc\nd\ne"}));
+    let (out, code, _) = s.run_line("head -3 f.txt");
+    assert_eq!(code, 0);
+    assert_eq!(out, "a\nb\nc\n");
+}
+
+#[test]
+fn tail_dash_n_shorthand() {
+    let mut s = shell_with_files(serde_json::json!({"f.txt": "a\nb\nc\nd\ne"}));
+    let (out, code, _) = s.run_line("tail -2 f.txt");
+    assert_eq!(code, 0);
+    assert_eq!(out, "d\ne\n");
+}
+
+// ---------------------------------------------------------------------------
+// wc
+// ---------------------------------------------------------------------------
 
 #[test]
 fn wc_counts_file() {
@@ -38,10 +134,31 @@ fn wc_counts_file() {
     }));
     let (out, code, _) = s.run_line("wc w.txt");
     assert_eq!(code, 0);
-    // Should contain line count, word count, byte count, filename
     assert!(out.contains("w.txt"), "got {:?}", out);
     assert!(out.contains("3"), "expected 3 words, got {:?}", out);
 }
+
+#[test]
+fn wc_from_stdin() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("echo 'hello world' | wc");
+    assert_eq!(code, 0);
+    assert!(out.contains("2"), "expected 2 words, got {:?}", out);
+}
+
+#[test]
+fn wc_l_counts_newlines() {
+    let mut s = shell_with_files(serde_json::json!({"f.txt": "no trailing newline"}));
+    let (out, _, _) = s.run_line("wc -l f.txt");
+    assert!(
+        out.contains("0"),
+        "expected 0 lines for no-newline file: {out}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// grep
+// ---------------------------------------------------------------------------
 
 #[test]
 fn grep_file_filter() {
@@ -61,10 +178,10 @@ fn grep_line_numbers_and_count() {
     }));
     let (out, c1, _) = s.run_line("grep -n one g.txt");
     assert_eq!(c1, 0);
-    assert!(out.contains("1") && out.contains("3"), "got {:?}", out);
+    assert_eq!(out, "1:one\n3:one\n");
     let (cnt, c2, _) = s.run_line("grep -c one g.txt");
     assert_eq!(c2, 0);
-    assert!(cnt.contains('2'), "got {:?}", cnt);
+    assert_eq!(cnt, "2\n");
 }
 
 #[test]
@@ -87,7 +204,7 @@ fn grep_multiple_files_shows_filename_prefix() {
     assert_eq!(code, 0);
     assert!(out.contains("ga.txt"), "got {:?}", out);
     assert!(out.contains("gb.txt"), "got {:?}", out);
-    assert!(out.lines().count() >= 2);
+    assert_eq!(out.lines().count(), 2);
 }
 
 #[test]
@@ -112,6 +229,18 @@ fn grep_v_inverts_match() {
 }
 
 #[test]
+fn grep_stdin_pipe() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("echo 'foo bar baz' | grep bar");
+    assert_eq!(code, 0);
+    assert!(out.contains("bar"));
+}
+
+// ---------------------------------------------------------------------------
+// sort
+// ---------------------------------------------------------------------------
+
+#[test]
 fn sort_sorts_and_numeric() {
     let mut s = shell_with_files(serde_json::json!({
         "letters.txt": "c\na\nb\n",
@@ -119,10 +248,10 @@ fn sort_sorts_and_numeric() {
     }));
     let (out, c1, _) = s.run_line("sort letters.txt");
     assert_eq!(c1, 0);
-    assert_eq!(out, "a\nb\nc");
+    assert_eq!(out, "a\nb\nc\n");
     let (nout, c2, _) = s.run_line("sort -n nums.txt");
     assert_eq!(c2, 0);
-    assert_eq!(nout, "2\n10");
+    assert_eq!(nout, "2\n10\n");
 }
 
 #[test]
@@ -132,7 +261,7 @@ fn sort_reverse_order() {
     }));
     let (out, code, _) = s.run_line("sort -r rev.txt");
     assert_eq!(code, 0);
-    assert_eq!(out, "c\nb\na");
+    assert_eq!(out, "c\nb\na\n");
 }
 
 #[test]
@@ -142,7 +271,7 @@ fn sort_numeric_then_reverse() {
     }));
     let (out, code, _) = s.run_line("sort -n -r nums.txt");
     assert_eq!(code, 0);
-    assert_eq!(out, "10\n2\n1");
+    assert_eq!(out, "10\n2\n1\n");
 }
 
 #[test]
@@ -156,7 +285,6 @@ fn sort_with_delimiter_and_key() {
     assert_eq!(lines[0], "alice,95", "highest score first: {out}");
     assert_eq!(lines[1], "charlie,91");
     assert_eq!(lines[2], "bob,82");
-    // header has score=0 numerically, so it goes last
     assert_eq!(lines[3], "name,score");
 }
 
@@ -173,6 +301,10 @@ fn sort_with_key_whitespace_default() {
     assert_eq!(lines[2], "bob 82");
 }
 
+// ---------------------------------------------------------------------------
+// uniq
+// ---------------------------------------------------------------------------
+
 #[test]
 fn uniq_dedupes_and_counts() {
     let mut s = shell_with_files(serde_json::json!({
@@ -180,11 +312,15 @@ fn uniq_dedupes_and_counts() {
     }));
     let (out, c1, _) = s.run_line("uniq u.txt");
     assert_eq!(c1, 0);
-    assert_eq!(out, "a\nb");
+    assert_eq!(out, "a\nb\n");
     let (cout, c2, _) = s.run_line("uniq -c u.txt");
     assert_eq!(c2, 0);
-    assert!(cout.contains("2") && cout.contains("a"), "got {:?}", cout);
+    assert_eq!(cout, "      2 a\n      1 b\n");
 }
+
+// ---------------------------------------------------------------------------
+// cut
+// ---------------------------------------------------------------------------
 
 #[test]
 fn cut_fields() {
@@ -193,15 +329,29 @@ fn cut_fields() {
     }));
     let (out, code, _) = s.run_line("cut -d, -f2 csv.txt");
     assert_eq!(code, 0);
-    assert_eq!(out, "y\nq");
+    assert_eq!(out, "y\nq\n");
 }
+
+#[test]
+fn cut_range_fields() {
+    let mut s = shell_with_files(serde_json::json!({
+        "data.txt": "a,b,c\nx,y,z"
+    }));
+    let (out, code, _) = s.run_line("cut -d, -f1,3 data.txt");
+    assert_eq!(code, 0);
+    assert!(out.contains("a") && out.contains("c"), "got {:?}", out);
+}
+
+// ---------------------------------------------------------------------------
+// tr
+// ---------------------------------------------------------------------------
 
 #[test]
 fn tr_substitutes_stdin() {
     let mut s = shell();
     let (out, code, _) = s.run_line("echo hello | tr h H");
     assert_eq!(code, 0);
-    assert_eq!(out, "Hello");
+    assert_eq!(out, "Hello\n");
 }
 
 #[test]
@@ -209,23 +359,34 @@ fn tr_delete_chars_from_stdin() {
     let mut s = shell();
     let (out, code, _) = s.run_line("echo hello | tr -d l");
     assert_eq!(code, 0);
-    assert_eq!(out, "heo");
+    assert_eq!(out, "heo\n");
 }
+
+#[test]
+fn tr_from_stdin_uppercase() {
+    let mut s = shell();
+    let (_out, code, _) = s.run_line("echo hello | tr a-z A-Z");
+    assert_eq!(code, 0);
+}
+
+// ---------------------------------------------------------------------------
+// rev / tac
+// ---------------------------------------------------------------------------
 
 #[test]
 fn rev_reverses_file_lines() {
     let mut s = shell_with_files(serde_json::json!({ "r.txt": "abc\nxy\n" }));
     let (out, code, _) = s.run_line("rev r.txt");
     assert_eq!(code, 0);
-    assert_eq!(out, "cba\nyx");
+    assert_eq!(out, "cba\nyx\n");
 }
 
 #[test]
-fn seq_inclusive_range() {
+fn rev_from_stdin() {
     let mut s = shell();
-    let (out, code, _) = s.run_line("seq 2 4");
+    let (out, code, _) = s.run_line("echo abc | rev");
     assert_eq!(code, 0);
-    assert_eq!(out, "2\n3\n4");
+    assert_eq!(out, "cba\n");
 }
 
 #[test]
@@ -242,15 +403,135 @@ fn tac_single_line_unchanged() {
     let mut s = shell_with_files(serde_json::json!({ "one.txt": "only" }));
     let (out, code, _) = s.run_line("tac one.txt");
     assert_eq!(code, 0);
-    assert_eq!(out, "only");
+    assert_eq!(out, "only\n");
 }
 
 #[test]
 fn tac_missing_file_fails() {
     let mut s = shell();
     let (_, code, _) = s.run_line("tac nowhere.txt");
-    assert_ne!(code, 0);
+    assert_eq!(code, 1);
 }
+
+#[test]
+fn tac_empty_file() {
+    let mut s = shell();
+    s.run_line("touch empty.txt");
+    let (out, code, _) = s.run_line("tac empty.txt");
+    assert_eq!(code, 0);
+    assert!(out.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// wc multi-file total
+// ---------------------------------------------------------------------------
+
+#[test]
+fn wc_multi_file_shows_total() {
+    let mut s = shell_with_files(serde_json::json!({
+        "f1.txt": "a\nb\n",
+        "f2.txt": "c\n"
+    }));
+    let (out, code, _) = s.run_line("wc f1.txt f2.txt");
+    assert_eq!(code, 0);
+    let last_line = out.lines().last().unwrap_or("");
+    assert!(
+        last_line.contains("total"),
+        "last line should contain 'total', got: {:?}",
+        out
+    );
+}
+
+// ---------------------------------------------------------------------------
+// uniq -d / -u
+// ---------------------------------------------------------------------------
+
+#[test]
+fn uniq_d_only_duplicates() {
+    let mut s = shell_with_files(serde_json::json!({
+        "u.txt": "a\na\nb\nc\nc"
+    }));
+    let (out, code, _) = s.run_line("uniq -d u.txt");
+    assert_eq!(code, 0);
+    assert_eq!(out, "a\nc\n");
+}
+
+#[test]
+fn uniq_u_only_unique() {
+    let mut s = shell_with_files(serde_json::json!({
+        "u.txt": "a\na\nb\nc\nc"
+    }));
+    let (out, code, _) = s.run_line("uniq -u u.txt");
+    assert_eq!(code, 0);
+    assert_eq!(out, "b\n");
+}
+
+// ---------------------------------------------------------------------------
+// seq -s / -w / float
+// ---------------------------------------------------------------------------
+
+#[test]
+fn seq_custom_separator() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("seq -s ' ' 1 5");
+    assert_eq!(code, 0);
+    assert_eq!(out, "1 2 3 4 5\n");
+}
+
+#[test]
+fn seq_equal_width_zero_pad() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("seq -w 1 10");
+    assert_eq!(code, 0);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "01");
+    assert_eq!(lines[9], "10");
+}
+
+#[test]
+fn seq_float_support() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("seq 0.5 0.5 2.0");
+    assert_eq!(code, 0);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 4, "expected 4 lines, got {:?}", lines);
+    assert_eq!(lines[0], "0.5");
+    assert_eq!(lines[1], "1.0");
+    assert_eq!(lines[2], "1.5");
+    assert_eq!(lines[3], "2.0");
+}
+
+// ---------------------------------------------------------------------------
+// seq
+// ---------------------------------------------------------------------------
+
+#[test]
+fn seq_inclusive_range() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("seq 2 4");
+    assert_eq!(code, 0);
+    assert_eq!(out, "2\n3\n4\n");
+}
+
+#[test]
+fn seq_single_arg() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("seq 3");
+    assert_eq!(code, 0);
+    assert_eq!(out, "1\n2\n3\n");
+}
+
+#[test]
+fn seq_with_increment() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("seq 1 2 7");
+    assert_eq!(code, 0);
+    assert_eq!(out, "1\n3\n5\n7\n");
+}
+
+// ---------------------------------------------------------------------------
+// nl
+// ---------------------------------------------------------------------------
 
 #[test]
 fn nl_numbers_lines() {
@@ -267,7 +548,7 @@ fn nl_numbers_lines() {
 fn nl_missing_file_fails() {
     let mut s = shell();
     let (_, code, _) = s.run_line("nl nope.txt");
-    assert_ne!(code, 0);
+    assert_eq!(code, 1);
 }
 
 #[test]
@@ -277,6 +558,19 @@ fn nl_from_stdin() {
     assert_eq!(code, 0);
     assert!(out.contains("1"), "got {:?}", out);
 }
+
+#[test]
+fn nl_empty_file() {
+    let mut s = shell();
+    s.run_line("touch empty.txt");
+    let (out, code, _) = s.run_line("nl empty.txt");
+    assert_eq!(code, 0);
+    assert!(out.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// paste
+// ---------------------------------------------------------------------------
 
 #[test]
 fn paste_merges_two_files() {
@@ -310,223 +604,210 @@ fn paste_custom_delimiter() {
 fn paste_missing_file_fails() {
     let mut s = shell();
     let (_, code, _) = s.run_line("paste ghost.txt");
-    assert_ne!(code, 0);
+    assert_eq!(code, 1);
 }
 
-#[test]
-fn printf_string_substitution() {
-    let mut s = shell();
-    let (out, code, _) = s.run_line("printf '%s world' hello");
-    assert_eq!(code, 0);
-    assert_eq!(out, "hello world");
-}
-
-#[test]
-fn printf_decimal_substitution() {
-    let mut s = shell();
-    let (out, code, _) = s.run_line("printf '%d items' 42");
-    assert_eq!(code, 0);
-    assert_eq!(out, "42 items");
-}
-
-#[test]
-fn printf_escape_newline_tab() {
-    let mut s = shell();
-    let (out, code, _) = s.run_line(r#"printf "line1\nline2""#);
-    assert_eq!(code, 0);
-    assert!(out.contains('\n'), "expected newline in {:?}", out);
-}
-
-// tac empty file
-#[test]
-fn tac_empty_file() {
-    let mut s = shell();
-    s.run_line("touch empty.txt");
-    let (out, code, _) = s.run_line("tac empty.txt");
-    assert_eq!(code, 0);
-    assert!(out.is_empty());
-}
-
-// nl empty file
-#[test]
-fn nl_empty_file() {
-    let mut s = shell();
-    s.run_line("touch empty.txt");
-    let (out, code, _) = s.run_line("nl empty.txt");
-    assert_eq!(code, 0);
-    assert!(out.is_empty());
-}
-
-// paste single file
 #[test]
 fn paste_single_file() {
     let mut s = shell_with_files(serde_json::json!({"a.txt": "line1\nline2"}));
     let (out, code, _) = s.run_line("paste a.txt");
     assert_eq!(code, 0);
-    assert_eq!(out, "line1\nline2");
+    assert_eq!(out, "line1\nline2\n");
 }
 
-// printf with %% literal
-#[test]
-fn printf_percent_literal() {
-    let mut s = shell();
-    let (out, code, _) = s.run_line("printf '100%%'");
-    assert_eq!(code, 0);
-    assert_eq!(out, "100%");
-}
+// ---------------------------------------------------------------------------
+// sed (literal matching, not in-place — see also transform.rs)
+// ---------------------------------------------------------------------------
 
-// printf no args
-#[test]
-fn printf_no_args_fails() {
-    let mut s = shell();
-    let (_, code, _) = s.run_line("printf");
-    assert_ne!(code, 0);
-}
-
-// grep from stdin
-#[test]
-fn grep_stdin_pipe() {
-    let mut s = shell();
-    let (out, code, _) = s.run_line("echo 'foo bar baz' | grep bar");
-    assert_eq!(code, 0);
-    assert!(out.contains("bar"));
-}
+// ---------------------------------------------------------------------------
+// grep -A / -B / -C context lines
+// ---------------------------------------------------------------------------
 
 #[test]
-fn head_from_stdin() {
-    let mut s = shell();
-    let (out, code, _) = s.run_line("echo 'a\nb\nc\nd\ne' | head -n 2");
-    assert_eq!(code, 0);
-    // head should take first 2 lines
-    let lines: Vec<&str> = out.lines().collect();
-    assert!(lines.len() <= 2);
-}
-
-#[test]
-fn tail_from_stdin() {
-    let mut s = shell();
-    let (out, code, _) = s.run_line("echo 'a\nb\nc' | tail -n 1");
-    assert_eq!(code, 0);
-    assert_eq!(out.lines().count(), 1);
-}
-
-#[test]
-fn wc_from_stdin() {
-    let mut s = shell();
-    let (out, code, _) = s.run_line("echo 'hello world' | wc");
-    assert_eq!(code, 0);
-    // Should show lines, words, bytes
-    assert!(out.contains("2"), "expected 2 words, got {:?}", out);
-}
-
-#[test]
-fn rev_from_stdin() {
-    let mut s = shell();
-    let (out, code, _) = s.run_line("echo abc | rev");
-    assert_eq!(code, 0);
-    assert_eq!(out, "cba");
-}
-
-#[test]
-fn seq_single_arg() {
-    let mut s = shell();
-    let (out, code, _) = s.run_line("seq 3");
-    assert_eq!(code, 0);
-    assert_eq!(out, "1\n2\n3");
-}
-
-#[test]
-fn cut_range_fields() {
+fn grep_a_shows_lines_after_match() {
     let mut s = shell_with_files(serde_json::json!({
-        "data.txt": "a,b,c\nx,y,z"
+        "f.txt": "line1\nmatch\nafter1\nafter2\nline5"
     }));
-    let (out, code, _) = s.run_line("cut -d, -f1,3 data.txt");
+    let (out, code, _) = s.run_line("grep -A 1 match f.txt");
     assert_eq!(code, 0);
-    assert!(out.contains("a") && out.contains("c"), "got {:?}", out);
-}
-
-#[test]
-fn tr_from_stdin_uppercase() {
-    let mut s = shell();
-    let (_out, code, _) = s.run_line("echo hello | tr a-z A-Z");
-    assert_eq!(code, 0);
-    // tr might not support ranges, but at least should not panic
-    assert!(code == 0);
-}
-
-// --- H2: echo -n suppresses trailing newline ---
-#[test]
-fn echo_n_suppresses_trailing_newline() {
-    let mut s = shell();
-    let (out, code, _) = s.run_line("echo -n hello");
-    assert_eq!(code, 0);
-    assert_eq!(out, "hello"); // no trailing newline
-                              // Contrast with regular echo:
-    let (out2, _, _) = s.run_line("echo hello");
-    assert_eq!(out2, "hello");
-}
-
-// --- M3: sed literal matching works ---
-#[test]
-fn sed_is_literal_not_regex() {
-    // Document: sed uses literal matching, not regex
-    let mut s = shell_with_files(serde_json::json!({"f.txt": "hello123world"}));
-    let (out, _, _) = s.run_line("sed 's/123//' f.txt");
-    assert_eq!(out, "helloworld"); // literal works
-}
-
-// --- M7: wc -l counts newlines not .lines() ---
-#[test]
-fn wc_l_counts_newlines() {
-    let mut s = shell_with_files(serde_json::json!({"f.txt": "no trailing newline"}));
-    let (out, _, _) = s.run_line("wc -l f.txt");
-    // "no trailing newline" has 0 newlines, so wc -l should say 0
+    assert!(out.contains("match"), "got {:?}", out);
+    assert!(out.contains("after1"), "got {:?}", out);
     assert!(
-        out.contains("0"),
-        "expected 0 lines for no-newline file: {out}"
+        !out.contains("after2"),
+        "should not include after2: {:?}",
+        out
     );
 }
 
-// --- L4: type exits 1 for unknown ---
 #[test]
-fn type_unknown_exits_1() {
-    let mut s = shell();
-    let (_, code, _) = s.run_line("type nonexistent_cmd");
-    assert_ne!(code, 0);
-}
-
-// --- L5: which stops on first unknown ---
-#[test]
-fn which_reports_all_args() {
-    let mut s = shell();
-    let (out, code, _) = s.run_line("which echo nonexistent_cmd cat");
-    assert_ne!(code, 0);
-    // Even though echo and cat are builtins, nonexistent_cmd should cause failure
-    assert!(out.contains("no nonexistent_cmd"), "got: {out}");
-}
-
-// --- L7: seq 3-arg form ---
-#[test]
-fn seq_with_increment() {
-    let mut s = shell();
-    let (out, code, _) = s.run_line("seq 1 2 7");
+fn grep_b_shows_lines_before_match() {
+    let mut s = shell_with_files(serde_json::json!({
+        "f.txt": "before1\nbefore2\nmatch\nafter1"
+    }));
+    let (out, code, _) = s.run_line("grep -B 1 match f.txt");
     assert_eq!(code, 0);
-    assert_eq!(out, "1\n3\n5\n7");
-}
-
-// --- L8: head/tail -N syntax ---
-#[test]
-fn head_dash_n_shorthand() {
-    let mut s = shell_with_files(serde_json::json!({"f.txt": "a\nb\nc\nd\ne"}));
-    let (out, code, _) = s.run_line("head -3 f.txt");
-    assert_eq!(code, 0);
-    assert_eq!(out, "a\nb\nc");
+    assert!(out.contains("before2"), "got {:?}", out);
+    assert!(out.contains("match"), "got {:?}", out);
+    assert!(
+        !out.contains("before1"),
+        "should not include before1: {:?}",
+        out
+    );
 }
 
 #[test]
-fn tail_dash_n_shorthand() {
-    let mut s = shell_with_files(serde_json::json!({"f.txt": "a\nb\nc\nd\ne"}));
-    let (out, code, _) = s.run_line("tail -2 f.txt");
+fn grep_c_upper_shows_context_both_sides() {
+    let mut s = shell_with_files(serde_json::json!({
+        "f.txt": "a\nb\nmatch\nd\ne"
+    }));
+    let (out, code, _) = s.run_line("grep -C 1 match f.txt");
     assert_eq!(code, 0);
-    assert_eq!(out, "d\ne");
+    assert!(out.contains("b"), "got {:?}", out);
+    assert!(out.contains("match"), "got {:?}", out);
+    assert!(out.contains("d"), "got {:?}", out);
+    assert!(!out.contains("a\n"), "should not include 'a': {:?}", out);
+    assert!(!out.contains("e"), "should not include 'e': {:?}", out);
+}
+
+#[test]
+fn grep_context_separator_between_groups() {
+    let mut s = shell_with_files(serde_json::json!({
+        "f.txt": "a\nmatch1\nb\nc\nd\nmatch2\ne"
+    }));
+    let (out, code, _) = s.run_line("grep -A 0 match f.txt");
+    assert_eq!(code, 0);
+    // When context is used but groups are disjoint, a "--" separator appears
+    assert!(
+        out.contains("--"),
+        "expected -- separator between groups: {:?}",
+        out
+    );
+}
+
+// ---------------------------------------------------------------------------
+// sed (literal matching, not in-place — see also transform.rs)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn sed_is_literal_not_regex() {
+    let mut s = shell_with_files(serde_json::json!({"f.txt": "hello123world"}));
+    let (out, _, _) = s.run_line("sed 's/123//' f.txt");
+    assert_eq!(out, "helloworld\n");
+}
+
+// ---------------------------------------------------------------------------
+// printf format extensions
+// ---------------------------------------------------------------------------
+
+#[test]
+fn printf_hex_lowercase() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("printf '%x' 255");
+    assert_eq!(code, 0);
+    assert_eq!(out, "ff");
+}
+
+#[test]
+fn printf_hex_uppercase() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("printf '%X' 255");
+    assert_eq!(code, 0);
+    assert_eq!(out, "FF");
+}
+
+#[test]
+fn printf_octal() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("printf '%o' 8");
+    assert_eq!(code, 0);
+    assert_eq!(out, "10");
+}
+
+#[test]
+fn printf_zero_pad_decimal() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("printf '%02d' 5");
+    assert_eq!(code, 0);
+    assert_eq!(out, "05");
+}
+
+#[test]
+fn printf_left_align_string() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("printf '%-10s|' hello");
+    assert_eq!(code, 0);
+    assert_eq!(out, "hello     |");
+}
+
+#[test]
+fn printf_fixed_float() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("printf '%f' 3.14");
+    assert_eq!(code, 0);
+    assert!(out.starts_with("3.14"), "got {:?}", out);
+}
+
+#[test]
+fn printf_scientific_notation() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("printf '%e' 314.0");
+    assert_eq!(code, 0);
+    assert!(out.contains('e') || out.contains('E'), "got {:?}", out);
+}
+
+#[test]
+fn printf_width_right_align_decimal() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("printf '%5d' 42");
+    assert_eq!(code, 0);
+    assert_eq!(out, "   42");
+}
+
+// ---------------------------------------------------------------------------
+// column command
+// ---------------------------------------------------------------------------
+
+#[test]
+fn column_t_aligns_whitespace_columns() {
+    let mut s = shell_with_files(serde_json::json!({
+        "data.txt": "name age\nalice 30\nbob 25\n"
+    }));
+    let (out, code, _) = s.run_line("column -t data.txt");
+    assert_eq!(code, 0);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 3);
+    // All lines should have same length (padded to column widths)
+    let len0 = lines[0].len();
+    let len1 = lines[1].len();
+    let len2 = lines[2].len();
+    assert_eq!(len0, len1, "lines 0 and 1 differ in length: {:?}", lines);
+    assert_eq!(len1, len2, "lines 1 and 2 differ in length: {:?}", lines);
+    assert!(out.contains("name"), "got {:?}", out);
+    assert!(out.contains("alice"), "got {:?}", out);
+}
+
+#[test]
+fn column_s_delimiter_csv() {
+    let mut s = shell_with_files(serde_json::json!({
+        "data.csv": "name,age\nalice,30\nbob,25\n"
+    }));
+    let (out, code, _) = s.run_line("column -s , -t data.csv");
+    assert_eq!(code, 0);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 3);
+    assert!(out.contains("name"), "got {:?}", out);
+    assert!(out.contains("alice"), "got {:?}", out);
+    // Columns should be aligned (same line lengths)
+    let len0 = lines[0].len();
+    let len1 = lines[1].len();
+    assert_eq!(len0, len1, "lines should be same length: {:?}", lines);
+}
+
+#[test]
+fn column_t_from_stdin() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("printf 'a b\\nc d\\n' | column -t");
+    assert_eq!(code, 0);
+    assert!(out.contains('a'), "got {:?}", out);
+    assert!(out.contains('b'), "got {:?}", out);
 }

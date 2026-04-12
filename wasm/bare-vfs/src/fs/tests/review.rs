@@ -9,7 +9,7 @@ fn normalize_dotdot_in_path() -> Result<(), VfsError> {
     fs.create_dir_all("/a/b")?;
     fs.write("/a/b/file", "data")?;
     // Access via unnormalized path with ..
-    assert_eq!(fs.read_to_string("/a/b/../b/file").unwrap(), "data");
+    assert_eq!(fs.read_to_string("/a/b/../b/file")?, "data");
     Ok(())
 }
 
@@ -17,7 +17,7 @@ fn normalize_dotdot_in_path() -> Result<(), VfsError> {
 fn normalize_dot_in_path() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/file", "x")?;
-    assert_eq!(fs.read_to_string("/./file").unwrap(), "x");
+    assert_eq!(fs.read_to_string("/./file")?, "x");
     Ok(())
 }
 
@@ -26,8 +26,8 @@ fn canonical_path_resolves_symlinks() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.create_dir_all("/real/dir")?;
     fs.write("/real/dir/file", "x")?;
-    fs.symlink("/real/dir", "/link").unwrap();
-    let canon = fs.canonical_path("/link/file").unwrap();
+    fs.symlink("/real/dir", "/link")?;
+    let canon = fs.canonical_path("/link/file")?;
     assert_eq!(canon, "/real/dir/file");
     Ok(())
 }
@@ -36,7 +36,7 @@ fn canonical_path_resolves_symlinks() -> Result<(), VfsError> {
 fn canonical_path_normalizes() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.create_dir_all("/a/b")?;
-    let canon = fs.canonical_path("/a/b/../b").unwrap();
+    let canon = fs.canonical_path("/a/b/../b")?;
     assert_eq!(canon, "/a/b");
     Ok(())
 }
@@ -70,17 +70,17 @@ fn write_preserves_hard_link() -> Result<(), VfsError> {
     // Issue #1: write() used to break hard links by allocating new inode
     let mut fs = MemFs::new();
     fs.write("/a", "original")?;
-    fs.hard_link("/a", "/b").unwrap();
-    let ino_before = fs.metadata("/a").unwrap().ino();
+    fs.hard_link("/a", "/b")?;
+    let ino_before = fs.metadata("/a")?.ino();
 
     fs.write("/a", "updated")?;
 
     // Same inode (not a new one)
-    assert_eq!(fs.metadata("/a").unwrap().ino(), ino_before);
+    assert_eq!(fs.metadata("/a")?.ino(), ino_before);
     // Visible through both names
-    assert_eq!(fs.read_to_string("/b").unwrap(), "updated");
+    assert_eq!(fs.read_to_string("/b")?, "updated");
     // nlink preserved
-    assert_eq!(fs.metadata("/a").unwrap().nlink(), 2);
+    assert_eq!(fs.metadata("/a")?.nlink(), 2);
     Ok(())
 }
 
@@ -88,10 +88,10 @@ fn write_preserves_hard_link() -> Result<(), VfsError> {
 fn write_with_mode_preserves_hard_link() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/a", "x")?;
-    fs.hard_link("/a", "/b").unwrap();
+    fs.hard_link("/a", "/b")?;
     fs.write_with_mode("/a", "y", 0o755)?;
-    assert_eq!(fs.read_to_string("/b").unwrap(), "y");
-    assert_eq!(fs.metadata("/b").unwrap().mode(), 0o755);
+    assert_eq!(fs.read_to_string("/b")?, "y");
+    assert_eq!(fs.metadata("/b")?.mode(), 0o755);
     Ok(())
 }
 
@@ -103,7 +103,7 @@ fn rename_to_missing_parent_fails() -> Result<(), VfsError> {
     let result = fs.rename("/a", "/no/such/dir/b");
     assert!(result.is_err());
     // Source should still exist (not orphaned)
-    assert_eq!(fs.read_to_string("/a").unwrap(), "data");
+    assert_eq!(fs.read_to_string("/a")?, "data");
     Ok(())
 }
 
@@ -115,7 +115,7 @@ fn copy_to_missing_parent_fails() -> Result<(), VfsError> {
     let result = fs.copy("/a", "/no/such/dir/b");
     assert!(result.is_err());
     // Source unchanged
-    assert_eq!(fs.read_to_string("/a").unwrap(), "data");
+    assert_eq!(fs.read_to_string("/a")?, "data");
     Ok(())
 }
 
@@ -131,17 +131,18 @@ fn symlink_fails_if_link_path_exists() -> Result<(), VfsError> {
     ));
     // Original file untouched
     assert!(fs.is_file("/existing"));
-    assert_eq!(fs.read_to_string("/existing").unwrap(), "data");
+    assert_eq!(fs.read_to_string("/existing")?, "data");
     Ok(())
 }
 
 #[test]
-fn symlink_fails_if_dir_exists_at_path() {
+fn symlink_fails_if_dir_exists_at_path() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir("/d").unwrap();
+    fs.create_dir("/d")?;
     let result = fs.symlink("/target", "/d");
     assert!(result.is_err());
     assert!(fs.is_dir("/d"));
+    Ok(())
 }
 
 #[test]
@@ -152,8 +153,8 @@ fn clone_memfs_is_independent() -> Result<(), VfsError> {
     let mut clone = fs.clone();
     clone.write("/a", "changed")?;
     // Original unaffected
-    assert_eq!(fs.read_to_string("/a").unwrap(), "hello");
-    assert_eq!(clone.read_to_string("/a").unwrap(), "changed");
+    assert_eq!(fs.read_to_string("/a")?, "hello");
+    assert_eq!(clone.read_to_string("/a")?, "changed");
     Ok(())
 }
 
@@ -162,7 +163,7 @@ fn hard_link_nlink_after_remove_all_links() -> Result<(), VfsError> {
     // Verify inode is freed when last link is removed
     let mut fs = MemFs::new();
     fs.write("/a", "data")?;
-    fs.hard_link("/a", "/b").unwrap();
+    fs.hard_link("/a", "/b")?;
     fs.remove("/a");
     fs.remove("/b");
     // Both paths should be gone
@@ -176,8 +177,8 @@ fn write_to_nonexistent_creates_new_inode() -> Result<(), VfsError> {
     // write() to new path should still work (not just in-place update)
     let mut fs = MemFs::new();
     fs.write("/new", "content")?;
-    assert_eq!(fs.read_to_string("/new").unwrap(), "content");
-    assert_eq!(fs.metadata("/new").unwrap().nlink(), 1);
+    assert_eq!(fs.read_to_string("/new")?, "content");
+    assert_eq!(fs.metadata("/new")?.nlink(), 1);
     Ok(())
 }
 
@@ -185,7 +186,7 @@ fn write_to_nonexistent_creates_new_inode() -> Result<(), VfsError> {
 fn write_overwrites_dir_creates_new_inode() -> Result<(), VfsError> {
     // write() over a directory returns IsADirectory error
     let mut fs = MemFs::new();
-    fs.create_dir("/d").unwrap();
+    fs.create_dir("/d")?;
     assert!(fs.write("/d", "now a file").is_err());
     // /d is still a directory
     assert!(fs.is_dir("/d"));

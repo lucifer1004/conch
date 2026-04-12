@@ -1,25 +1,39 @@
 #import "ansi.typ": _has-ansi, _render-ansi-raw
 #import "chrome.typ": _resolve-chrome
 
+#let _render-bg-completions(entry, theme) = {
+  if "bg-completions" in entry {
+    for note in entry.bg-completions {
+      text(fill: theme.fg)[#note]
+      linebreak()
+    }
+  }
+}
+
 #let _render-output(entry, theme, font) = {
   if entry.output == "" { return }
+  // Strip trailing \n — commands produce stdout with trailing newline (bash
+  // convention), but the terminal display doesn't render a visible blank line
+  // for the final newline (it just positions the cursor for the next prompt).
+  let output = entry.output.trim("\n", at: end)
+  if output == "" { return }
   let has-lang = "lang" in entry and entry.lang != none
-  let has-ansi = _has-ansi(entry.output)
+  let has-ansi = _has-ansi(output)
   if has-lang and not has-ansi {
     show raw.where(block: false): it => {
       set text(..font)
       box(fill: none, inset: 0pt, outset: 0pt, radius: 0pt, stroke: none, it)
     }
-    for line in entry.output.split("\n") {
+    for line in output.split("\n") {
       raw(lang: entry.lang, line)
       linebreak()
     }
   } else if has-ansi {
-    _render-ansi-raw(entry.output, theme.fg, theme.ansi)
+    _render-ansi-raw(output, theme.fg, theme.ansi)
     linebreak()
   } else {
     let color = if entry.exit-code != 0 { theme.error } else { theme.fg }
-    for line in entry.output.split("\n") {
+    for line in output.split("\n") {
       text(fill: color)[#line]
       linebreak()
     }
@@ -37,8 +51,21 @@
 }
 
 #let _render-prompt(entry, theme) = {
-  _render-prompt-parts(entry.user, entry.hostname, entry.path, theme)
-  text(fill: theme.fg)[#entry.command]
+  let cmd = entry.command
+  if cmd.contains("\n") {
+    // Multi-line command: first line gets full prompt, rest get "> "
+    let lines = cmd.split("\n")
+    _render-prompt-parts(entry.user, entry.hostname, entry.path, theme)
+    text(fill: theme.fg)[#lines.at(0)]
+    for line in lines.slice(1) {
+      linebreak()
+      text(fill: theme.prompt-sym)[> ]
+      text(fill: theme.fg)[#line]
+    }
+  } else {
+    _render-prompt-parts(entry.user, entry.hostname, entry.path, theme)
+    text(fill: theme.fg)[#cmd]
+  }
 }
 
 /// Caret at the prompt (`0.85em` tall — small enough that line height stays stable when wrap moves it to the next line). Hidden frames omit the box entirely.
@@ -76,6 +103,7 @@
       _render-prompt(entry, theme)
       linebreak()
       _render-output(entry, theme, font)
+      _render-bg-completions(entry, theme)
     }
 
     // Final prompt
@@ -188,6 +216,12 @@
                   _render-prompt(entry, theme)
                   linebreak()
                   _render-output(entry, theme, font)
+                  if "bg-completions" in entry {
+                    for note in entry.bg-completions {
+                      text(fill: theme.fg)[#note]
+                      linebreak()
+                    }
+                  }
                 }
                 if is-last and final-fits {
                   _render-prompt-parts(

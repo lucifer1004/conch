@@ -2,6 +2,10 @@
 members = ["conch-wasm", "bare-vfs"]
 resolver = "2"
 
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+
 [profile.release]
 lto = true
 opt-level = 'z'

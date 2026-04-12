@@ -2,7 +2,7 @@
 
 // Source for `just gif` → demo/demo.gif (README quick-start session, per-keystroke frames).
 // Showcases: syntax highlighting, permissions, scripts, users/groups, keyboard corrections,
-// pipes, sudo, symlinks, and scrolling (terminal height triggers top clipping).
+// pipes, process control, timestamps, streaming pipelines, job control, and shell builtins.
 #terminal-per-char(
   hold: (
     after-output: 10,
@@ -34,22 +34,24 @@
   height: 350pt,
   width: 560pt,
 )[```
-ls -la
+ls -l
 cat src/main.rs
-cat app.py
 cat secret.txt
 chmod 644 secret.txt
 cat secert\x7f\x7f\x7fret.txt
 ./deploy.sh
-cat dist/VERSION
-ln -s src/main.rs link.rs
 cat data.csv | sort -t, -k3 -rn | head -n 2
+seq 1 100 | head -5
+echo "Background job" > /tmp/result.txt &
+jobs
+touch before.txt; sleep 120; touch after.txt
+ls -l before.txt after.txt
+echo "PID: $$, User: $UID"
+time echo "Hello from conch!"
 useradd bob
 su alice
-whoami
-id
 sudo cat /root/flag.txt
-tree
+echo -e "name age\nalice 30\nbob 25" | column -t
 history
 \x1b[A\x1b[A\x1b[A
 eco\x1b[Dh\x1b[F "All features!"

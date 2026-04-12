@@ -4,12 +4,13 @@ use crate::error::VfsErrorKind;
 // -- Timestamp tests ----------------------------------------------------
 
 #[test]
-fn timestamps_default_zero() {
+fn timestamps_default_zero() -> Result<(), VfsError> {
     let fs = MemFs::new();
     assert_eq!(fs.time(), 0);
-    let meta = fs.metadata("/").unwrap();
+    let meta = fs.metadata("/")?;
     assert_eq!(meta.mtime(), 0);
     assert_eq!(meta.ctime(), 0);
+    Ok(())
 }
 
 #[test]
@@ -17,13 +18,13 @@ fn timestamps_tick_on_write() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/a", "hello")?;
     assert_eq!(fs.time(), 1);
-    let meta = fs.metadata("/a").unwrap();
+    let meta = fs.metadata("/a")?;
     assert_eq!(meta.mtime(), 1);
     assert_eq!(meta.ctime(), 1);
 
     fs.write("/b", "world")?;
     assert_eq!(fs.time(), 2);
-    let meta = fs.metadata("/b").unwrap();
+    let meta = fs.metadata("/b")?;
     assert_eq!(meta.mtime(), 2);
     assert_eq!(meta.ctime(), 2);
     Ok(())
@@ -35,7 +36,7 @@ fn timestamps_set_time_override() -> Result<(), VfsError> {
     fs.set_time(1000);
     fs.write("/a", "hello")?;
     assert_eq!(fs.time(), 1001);
-    let meta = fs.metadata("/a").unwrap();
+    let meta = fs.metadata("/a")?;
     assert_eq!(meta.mtime(), 1001);
     Ok(())
 }
@@ -44,9 +45,9 @@ fn timestamps_set_time_override() -> Result<(), VfsError> {
 fn timestamps_append_updates_mtime() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/a", "hello")?;
-    let t1 = fs.metadata("/a").unwrap().mtime();
-    fs.append("/a", b" world").unwrap();
-    let meta = fs.metadata("/a").unwrap();
+    let t1 = fs.metadata("/a")?.mtime();
+    fs.append("/a", b" world")?;
+    let meta = fs.metadata("/a")?;
     assert!(meta.mtime() > t1);
     assert!(meta.ctime() > t1);
     Ok(())
@@ -56,12 +57,12 @@ fn timestamps_append_updates_mtime() -> Result<(), VfsError> {
 fn timestamps_touch_updates_existing_mtime() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/a", "hello")?;
-    let t1 = fs.metadata("/a").unwrap().mtime();
+    let t1 = fs.metadata("/a")?.mtime();
     fs.touch("/a")?;
-    let t2 = fs.metadata("/a").unwrap().mtime();
+    let t2 = fs.metadata("/a")?.mtime();
     assert!(t2 > t1);
     // Content unchanged
-    assert_eq!(fs.read_to_string("/a").unwrap(), "hello");
+    assert_eq!(fs.read_to_string("/a")?, "hello");
     Ok(())
 }
 
@@ -69,7 +70,7 @@ fn timestamps_touch_updates_existing_mtime() -> Result<(), VfsError> {
 fn timestamps_touch_creates_with_timestamps() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.touch("/new")?;
-    let meta = fs.metadata("/new").unwrap();
+    let meta = fs.metadata("/new")?;
     assert!(meta.mtime() > 0);
     assert!(meta.ctime() > 0);
     Ok(())
@@ -79,11 +80,11 @@ fn timestamps_touch_creates_with_timestamps() -> Result<(), VfsError> {
 fn timestamps_set_mode_only_updates_ctime() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/a", "hello")?;
-    let m = fs.metadata("/a").unwrap();
+    let m = fs.metadata("/a")?;
     let orig_mtime = m.mtime();
     let orig_ctime = m.ctime();
-    fs.set_mode("/a", 0o755).unwrap();
-    let m2 = fs.metadata("/a").unwrap();
+    fs.set_mode("/a", 0o755)?;
+    let m2 = fs.metadata("/a")?;
     assert_eq!(m2.mtime(), orig_mtime); // mtime unchanged
     assert!(m2.ctime() > orig_ctime); // ctime updated
     Ok(())
@@ -93,11 +94,11 @@ fn timestamps_set_mode_only_updates_ctime() -> Result<(), VfsError> {
 fn timestamps_chown_only_updates_ctime() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/a", "hello")?;
-    let m = fs.metadata("/a").unwrap();
+    let m = fs.metadata("/a")?;
     let orig_mtime = m.mtime();
     let orig_ctime = m.ctime();
-    fs.chown("/a", 1000, 1000).unwrap();
-    let m2 = fs.metadata("/a").unwrap();
+    fs.chown("/a", 1000, 1000)?;
+    let m2 = fs.metadata("/a")?;
     assert_eq!(m2.mtime(), orig_mtime);
     assert!(m2.ctime() > orig_ctime);
     Ok(())
@@ -107,11 +108,11 @@ fn timestamps_chown_only_updates_ctime() -> Result<(), VfsError> {
 fn timestamps_rename_preserves() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/a", "hello")?;
-    let m = fs.metadata("/a").unwrap();
+    let m = fs.metadata("/a")?;
     let orig_mtime = m.mtime();
     let orig_ctime = m.ctime();
-    fs.rename("/a", "/b").unwrap();
-    let m2 = fs.metadata("/b").unwrap();
+    fs.rename("/a", "/b")?;
+    let m2 = fs.metadata("/b")?;
     assert_eq!(m2.mtime(), orig_mtime);
     assert_eq!(m2.ctime(), orig_ctime);
     Ok(())
@@ -121,28 +122,29 @@ fn timestamps_rename_preserves() -> Result<(), VfsError> {
 fn timestamps_copy_gets_new_timestamps() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/a", "hello")?;
-    let src_time = fs.metadata("/a").unwrap().mtime();
-    fs.copy("/a", "/b").unwrap();
-    let dst_time = fs.metadata("/b").unwrap().mtime();
+    let src_time = fs.metadata("/a")?.mtime();
+    fs.copy("/a", "/b")?;
+    let dst_time = fs.metadata("/b")?.mtime();
     assert!(dst_time > src_time);
     Ok(())
 }
 
 #[test]
-fn timestamps_create_dir() {
+fn timestamps_create_dir() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir("/d").unwrap();
-    let meta = fs.metadata("/d").unwrap();
+    fs.create_dir("/d")?;
+    let meta = fs.metadata("/d")?;
     assert!(meta.mtime() > 0);
     assert_eq!(meta.mtime(), meta.ctime());
+    Ok(())
 }
 
 #[test]
 fn timestamps_symlink() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/target", "x")?;
-    fs.symlink("/target", "/link").unwrap();
-    let meta = fs.symlink_metadata("/link").unwrap();
+    fs.symlink("/target", "/link")?;
+    let meta = fs.symlink_metadata("/link")?;
     assert!(meta.mtime() > 0);
     Ok(())
 }
@@ -153,9 +155,9 @@ fn timestamps_ordering() -> Result<(), VfsError> {
     fs.write("/first", "a")?;
     fs.write("/second", "b")?;
     fs.write("/third", "c")?;
-    let t1 = fs.metadata("/first").unwrap().mtime();
-    let t2 = fs.metadata("/second").unwrap().mtime();
-    let t3 = fs.metadata("/third").unwrap().mtime();
+    let t1 = fs.metadata("/first")?.mtime();
+    let t2 = fs.metadata("/second")?.mtime();
+    let t3 = fs.metadata("/third")?.mtime();
     assert!(t1 < t2);
     assert!(t2 < t3);
     Ok(())
@@ -165,7 +167,7 @@ fn timestamps_ordering() -> Result<(), VfsError> {
 fn timestamps_in_dir_entry() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/a", "hello")?;
-    let entries = fs.read_dir("/").unwrap();
+    let entries = fs.read_dir("/")?;
     let e = &entries[0];
     assert_eq!(e.name, "a");
     assert!(e.mtime > 0);
@@ -173,12 +175,13 @@ fn timestamps_in_dir_entry() -> Result<(), VfsError> {
 }
 
 #[test]
-fn timestamps_insert_sets_current_time() {
+fn timestamps_insert_sets_current_time() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.set_time(100);
     fs.insert("/x".to_string(), Entry::file("data"));
-    let meta = fs.metadata("/x").unwrap();
+    let meta = fs.metadata("/x")?;
     assert_eq!(meta.mtime(), 101);
+    Ok(())
 }
 
 // -- atime / nlink / DirEntry::size tests ----------------------------------
@@ -187,7 +190,7 @@ fn timestamps_insert_sets_current_time() {
 fn atime_initialized_with_mtime() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/f.txt", "hello")?;
-    let meta = fs.metadata("/f.txt").unwrap();
+    let meta = fs.metadata("/f.txt")?;
     assert_eq!(meta.atime(), meta.mtime());
     Ok(())
 }
@@ -196,9 +199,9 @@ fn atime_initialized_with_mtime() -> Result<(), VfsError> {
 fn atime_not_updated_on_set_mode() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/f.txt", "hello")?;
-    let atime_before = fs.metadata("/f.txt").unwrap().atime();
-    fs.set_mode("/f.txt", 0o600).unwrap();
-    let atime_after = fs.metadata("/f.txt").unwrap().atime();
+    let atime_before = fs.metadata("/f.txt")?.atime();
+    fs.set_mode("/f.txt", 0o600)?;
+    let atime_after = fs.metadata("/f.txt")?.atime();
     assert_eq!(atime_before, atime_after);
     Ok(())
 }
@@ -207,8 +210,8 @@ fn atime_not_updated_on_set_mode() -> Result<(), VfsError> {
 fn set_atime_explicit() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/f.txt", "hello")?;
-    fs.set_atime("/f.txt", 999).unwrap();
-    assert_eq!(fs.metadata("/f.txt").unwrap().atime(), 999);
+    fs.set_atime("/f.txt", 999)?;
+    assert_eq!(fs.metadata("/f.txt")?.atime(), 999);
     Ok(())
 }
 
@@ -222,25 +225,32 @@ fn set_atime_not_found() {
 fn nlink_file_is_one() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/f.txt", "hello")?;
-    assert_eq!(fs.metadata("/f.txt").unwrap().nlink(), 1);
+    assert_eq!(fs.metadata("/f.txt")?.nlink(), 1);
     Ok(())
 }
 
 #[test]
-fn nlink_dir_is_two() {
+fn nlink_dir_is_two() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.create_dir("/d").unwrap();
-    assert_eq!(fs.metadata("/d").unwrap().nlink(), 2);
+    fs.create_dir("/d")?;
+    assert_eq!(fs.metadata("/d")?.nlink(), 2);
+    Ok(())
 }
 
 #[test]
 fn dir_entry_has_size() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/file.txt", "hello world")?;
-    fs.create_dir("/sub").unwrap();
-    let entries = fs.read_dir("/").unwrap();
-    let file_e = entries.iter().find(|e| e.name == "file.txt").unwrap();
-    let dir_e = entries.iter().find(|e| e.name == "sub").unwrap();
+    fs.create_dir("/sub")?;
+    let entries = fs.read_dir("/")?;
+    let file_e = entries
+        .iter()
+        .find(|e| e.name == "file.txt")
+        .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
+    let dir_e = entries
+        .iter()
+        .find(|e| e.name == "sub")
+        .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
     assert_eq!(file_e.size, 11);
     assert_eq!(dir_e.size, 0);
     Ok(())

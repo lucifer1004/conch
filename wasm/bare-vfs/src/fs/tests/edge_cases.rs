@@ -70,12 +70,27 @@ fn paths_dfs_order() -> Result<(), VfsError> {
     fs.write("/a/g.txt", "".to_string())?;
     fs.create_dir_all("/z")?;
     let paths = fs.paths();
-    // DFS: / → /a → /a/b → /a/b/f.txt → /a/g.txt → /z
-    let a_idx = paths.iter().position(|p| p == "/a").unwrap();
-    let ab_idx = paths.iter().position(|p| p == "/a/b").unwrap();
-    let abf_idx = paths.iter().position(|p| p == "/a/b/f.txt").unwrap();
-    let ag_idx = paths.iter().position(|p| p == "/a/g.txt").unwrap();
-    let z_idx = paths.iter().position(|p| p == "/z").unwrap();
+    // DFS: / -> /a -> /a/b -> /a/b/f.txt -> /a/g.txt -> /z
+    let a_idx = paths
+        .iter()
+        .position(|p| p == "/a")
+        .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
+    let ab_idx = paths
+        .iter()
+        .position(|p| p == "/a/b")
+        .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
+    let abf_idx = paths
+        .iter()
+        .position(|p| p == "/a/b/f.txt")
+        .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
+    let ag_idx = paths
+        .iter()
+        .position(|p| p == "/a/g.txt")
+        .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
+    let z_idx = paths
+        .iter()
+        .position(|p| p == "/z")
+        .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
     // /a comes before its children
     assert!(a_idx < ab_idx);
     assert!(ab_idx < abf_idx);
@@ -90,11 +105,20 @@ fn iter_returns_correct_entry_types() -> Result<(), VfsError> {
     fs.create_dir_all("/d")?;
     fs.write("/d/f.txt", "data".to_string())?;
     let entries = fs.iter();
-    let root = entries.iter().find(|(p, _)| p == "/").unwrap();
+    let root = entries
+        .iter()
+        .find(|(p, _)| p == "/")
+        .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
     assert!(root.1.is_dir());
-    let dir = entries.iter().find(|(p, _)| p == "/d").unwrap();
+    let dir = entries
+        .iter()
+        .find(|(p, _)| p == "/d")
+        .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
     assert!(dir.1.is_dir());
-    let file = entries.iter().find(|(p, _)| p == "/d/f.txt").unwrap();
+    let file = entries
+        .iter()
+        .find(|(p, _)| p == "/d/f.txt")
+        .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
     assert!(file.1.is_file());
     assert_eq!(file.1.content_str(), Some("data"));
     Ok(())
@@ -124,7 +148,7 @@ fn rename_moves_subtree() -> Result<(), VfsError> {
     fs.create_dir_all("/src/sub")?;
     fs.write("/src/sub/f.txt", "data".to_string())?;
     fs.create_dir_all("/dst")?;
-    fs.rename("/src", "/dst/moved").unwrap();
+    fs.rename("/src", "/dst/moved")?;
     assert!(!fs.exists("/src"));
     assert!(fs.is_dir("/dst/moved"));
     assert!(fs.is_dir("/dst/moved/sub"));
@@ -138,7 +162,7 @@ fn many_siblings() -> Result<(), VfsError> {
     for i in 0..100 {
         fs.write(&alloc::format!("/f{:03}.txt", i), alloc::format!("{}", i))?;
     }
-    let entries = fs.read_dir("/").unwrap();
+    let entries = fs.read_dir("/")?;
     assert_eq!(entries.len(), 100);
     // Sorted by name
     assert_eq!(entries[0].name, "f000.txt");
@@ -150,7 +174,9 @@ fn many_siblings() -> Result<(), VfsError> {
 fn metadata_via_get() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write_with_mode("/f.txt", "hi", 0o444)?;
-    let e = fs.get("/f.txt").unwrap();
+    let e = fs
+        .get("/f.txt")
+        .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
     assert!(e.is_file());
     assert!(e.is_readable());
     assert!(!e.is_writable());
@@ -161,7 +187,13 @@ fn metadata_via_get() -> Result<(), VfsError> {
 #[test]
 fn get_root() {
     let fs = MemFs::new();
-    let e = fs.get("/").unwrap();
+    let e = match fs.get("/") {
+        Some(e) => e,
+        None => {
+            assert!(false, "expected root entry");
+            return;
+        }
+    };
     assert!(e.is_dir());
     assert_eq!(e.mode(), 0o755);
 }
@@ -277,7 +309,7 @@ fn rename_overwrites_destination() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/src", "new".to_string())?;
     fs.write("/dst", "old".to_string())?;
-    fs.rename("/src", "/dst").unwrap();
+    fs.rename("/src", "/dst")?;
     assert!(!fs.exists("/src"));
     assert_eq!(fs.read_to_string("/dst"), Ok("new"));
     Ok(())
@@ -312,7 +344,7 @@ fn empty_fs_iter() {
 fn append_to_empty_file() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.touch("/f.txt")?;
-    fs.append("/f.txt", b"hello").unwrap();
+    fs.append("/f.txt", b"hello")?;
     assert_eq!(fs.read_to_string("/f.txt"), Ok("hello"));
     Ok(())
 }
@@ -321,8 +353,8 @@ fn append_to_empty_file() -> Result<(), VfsError> {
 fn append_multiple_times() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/f.txt", "a".to_string())?;
-    fs.append("/f.txt", b"b").unwrap();
-    fs.append("/f.txt", b"c").unwrap();
+    fs.append("/f.txt", b"b")?;
+    fs.append("/f.txt", b"c")?;
     assert_eq!(fs.read_to_string("/f.txt"), Ok("abc"));
     Ok(())
 }
@@ -333,11 +365,11 @@ fn remove_dir_all_root_clears_children() -> Result<(), VfsError> {
     fs.create_dir_all("/a/b")?;
     fs.write("/a/b/f.txt", "x".to_string())?;
     fs.write("/c.txt", "y".to_string())?;
-    fs.remove_dir_all("/").unwrap();
+    fs.remove_dir_all("/")?;
     assert!(fs.is_dir("/")); // root still exists
     assert!(!fs.exists("/a")); // children gone
     assert!(!fs.exists("/c.txt"));
-    assert!(fs.read_dir("/").unwrap().is_empty());
+    assert!(fs.read_dir("/")?.is_empty());
     Ok(())
 }
 
@@ -351,10 +383,16 @@ fn remove_dir_all_empty_dir() -> Result<(), VfsError> {
 }
 
 #[test]
-fn set_mode_on_root() {
+fn set_mode_on_root() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
-    fs.set_mode("/", 0o500).unwrap();
-    assert_eq!(fs.get("/").unwrap().mode(), 0o500);
+    fs.set_mode("/", 0o500)?;
+    assert_eq!(
+        fs.get("/")
+            .ok_or(VfsError::from(VfsErrorKind::NotFound))?
+            .mode(),
+        0o500
+    );
+    Ok(())
 }
 
 #[test]
@@ -362,10 +400,16 @@ fn read_dir_preserves_child_modes() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write_with_mode("/a.txt", "x", 0o444)?;
     fs.create_dir_all("/d")?;
-    fs.set_mode("/d", 0o700).unwrap();
-    let entries = fs.read_dir("/").unwrap();
-    let a = entries.iter().find(|e| e.name == "a.txt").unwrap();
-    let d = entries.iter().find(|e| e.name == "d").unwrap();
+    fs.set_mode("/d", 0o700)?;
+    let entries = fs.read_dir("/")?;
+    let a = entries
+        .iter()
+        .find(|e| e.name == "a.txt")
+        .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
+    let d = entries
+        .iter()
+        .find(|e| e.name == "d")
+        .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
     assert_eq!(a.mode, 0o444);
     assert_eq!(d.mode, 0o700);
     Ok(())
@@ -388,7 +432,7 @@ fn read_returns_exact_bytes() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     let data: Vec<u8> = (0..=255).collect();
     fs.write("/all_bytes", data.clone())?;
-    assert_eq!(fs.read("/all_bytes").unwrap().len(), 256);
+    assert_eq!(fs.read("/all_bytes")?.len(), 256);
     assert_eq!(fs.read("/all_bytes"), Ok(data.as_slice()));
     Ok(())
 }
@@ -401,7 +445,7 @@ fn paths_after_deletion() -> Result<(), VfsError> {
     fs.create_dir_all("/a/b")?;
     fs.write("/a/b/f.txt", "x".to_string())?;
     fs.write("/c.txt", "y".to_string())?;
-    fs.remove_dir_all("/a").unwrap();
+    fs.remove_dir_all("/a")?;
     let paths = fs.paths();
     assert!(paths.contains(&"/".to_string()));
     assert!(paths.contains(&"/c.txt".to_string()));
@@ -416,7 +460,7 @@ fn operations_after_remove_middle() -> Result<(), VfsError> {
     fs.create_dir_all("/a/b/c")?;
     fs.write("/a/b/c/deep.txt", "deep".to_string())?;
     // Remove middle node
-    fs.remove_dir_all("/a/b").unwrap();
+    fs.remove_dir_all("/a/b")?;
     assert!(fs.is_dir("/a"));
     assert!(!fs.exists("/a/b"));
     // Can recreate

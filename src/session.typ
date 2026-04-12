@@ -26,10 +26,23 @@
   }
 }
 
+/// Analyze a script to get statement ranges without executing.
+#let _analyze-script(script) = {
+  if script == "" { return (statements: ()) }
+  json(_plugin.analyze_script(bytes(script)))
+}
+
 #let _parse-commands(body) = {
   let found = _find-raw(body)
-  if found != "" { found.split("\n").filter(line => line.trim() != "") } else {
-    ()
+  if found == "" { return () }
+  // Use statement-aware splitting: multi-line constructs (if/fi, for/done)
+  // become single command strings instead of being split per line.
+  let analysis = _analyze-script(found)
+  if "error" in analysis {
+    // Fallback to line-by-line for backward compat on parse errors
+    found.split("\n").filter(line => line.trim() != "")
+  } else {
+    analysis.statements.map(s => s.source)
   }
 }
 

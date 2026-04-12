@@ -2,7 +2,7 @@
 
 The Rust WASM backend for [conch](../../README.md) — a shell simulator that renders interactive terminal sessions in Typst.
 
-conch-wasm implements a virtual Unix shell with 70+ builtin commands, backed by [bare-vfs](../bare-vfs/) for the in-memory filesystem. It compiles to `wasm32-unknown-unknown` and is loaded as a Typst WASM plugin.
+conch-wasm implements a virtual Unix shell with 90+ builtin commands, backed by [bare-vfs](../bare-vfs/) for the in-memory filesystem. It compiles to `wasm32-unknown-unknown` and is loaded as a Typst WASM plugin.
 
 ## Architecture
 
@@ -10,7 +10,7 @@ conch-wasm implements a virtual Unix shell with 70+ builtin commands, backed by 
 Typst document
   └── conch WASM plugin (this crate)
         ├── Shell       — command dispatch, pipes, redirects, variable expansion
-        ├── Commands    — 70+ Unix command implementations
+        ├── Commands    — 90+ Unix command implementations
         ├── Parser      — pipeline parsing (;, &&, ||, |, >, >>)
         ├── UserDb      — in-memory user/group database
         └── bare-vfs    — inode-based virtual filesystem
@@ -20,23 +20,23 @@ Typst document
 
 ### Filesystem
 
-`ls`, `cat`, `mkdir`, `touch`, `rm`, `cp` (`-r`), `mv`, `ln` (`-s`, hard links), `find`, `tee`, `chmod` (octal + symbolic), `chown`, `chgrp`, `rmdir`, `mktemp`, `readlink` (`-f`)
+`ls` (`-l`, `-a`, `-R`, `-1`, `-h`, `-t`), `cat` (`-`, stdin), `mkdir`, `touch`, `rm`, `cp` (`-r`, `-n`, `-p`), `mv` (multi-source), `ln` (`-s`, `-f`, hard links), `find` (`-name`, `-type`, `-maxdepth`, `-exec`, `-iname`, `-delete`, `-path`), `tee`, `chmod` (octal + symbolic, `-R`), `chown`, `chgrp`, `rmdir`, `mktemp`, `readlink` (`-f`)
 
 ### Text Processing
 
-`echo` (`-n`, `-e`), `printf`, `grep` (`-i`, `-n`, `-c`, `-v`), `head`, `tail`, `sort` (`-r`, `-n`), `uniq` (`-c`), `wc` (`-l`, `-w`, `-c`), `cut` (`-d`, `-f`), `tr` (`-d`), `rev`, `seq`, `tac`, `nl`, `paste` (`-d`)
+`echo` (`-n`, `-e`), `printf` (width, precision, float), `grep` (`-i`, `-n`, `-c`, `-v`, `-E`, `-q`, `-w`, `-l`, `-o`, `-A`/`-B`/`-C`), `head`, `tail` (`+N`), `sort` (`-r`, `-n`, `-u`, `-k`, `-t`), `uniq` (`-c`, `-d`, `-u`), `wc` (`-l`, `-w`, `-c`, multi-file), `cut` (`-d`, `-f`, `-c`), `tr` (`-d`, `-s`, ranges, POSIX classes), `rev`, `seq` (`-s`, `-w`, floats), `tac`, `nl`, `paste` (`-d`, `-s`), `column`, `xargs`
 
 ### Inspection
 
-`stat`, `test`/`[` (with `!` negation), `du` (`-h`, `-s`), `tree`
+`stat` (`-c FORMAT`), `test`/`[` (with `!` negation, `-a`/`-o`, `-L`/`-h`, `-nt`/`-ot`), `[[ ]]` (extended test, `-L`/`-h`), `du` (`-h`, `-s`, `-d`/`--max-depth`, `-c`), `tree` (`-L`, `-a`, summary line)
 
 ### Transform
 
-`sed` (`-i`, `s///`, `s///g`), `diff`, `base64` (`-d`), `xxd`
+`sed` (`-i`, `-n`, `-E`, `s///`, `s///g`, `s///p`, `d`, `a\`/`i\`/`c\`, ranges, alternate delimiters, backreferences), `diff` (LCS algorithm, `-u`, `-q`), `base64` (`-d`, stdin), `xxd` (stdin)
 
 ### Navigation & Environment
 
-`cd`, `pwd`, `env`, `printenv`, `export`, `unset`, `which`, `type`, `hostname`, `whoami`, `date`, `basename`, `dirname`, `realpath`, `sleep`, `history`
+`cd` (`cd -`), `pwd`, `pushd`, `popd`, `dirs`, `env`, `printenv` (single-variable), `export` (no-arg listing), `unset`, `which`, `type` (`-t`, alias detection), `hostname`, `whoami`, `date` (`+FORMAT`), `basename`, `dirname`, `realpath`, `sleep` (suffix support), `time`, `timeout`
 
 ### Scripting
 
@@ -44,16 +44,35 @@ Typst document
 
 ### User Management
 
-`useradd`, `userdel` (`-r`), `usermod` (`-aG`), `groupadd`, `su` (`-`), `sudo`, `passwd`, `id`, `groups`
+`useradd`, `userdel` (`-r`), `usermod` (`-aG`), `groupadd`, `su` (`-`, `-c COMMAND`), `sudo` (`-u USER`), `passwd`, `id`, `groups`
+
+### Builtins
+
+`set` (no-arg listing, `-e`/`-u`/`-x`/`-f`/`-C`, `-o pipefail`), `shopt` (shell options), `declare`/`local` (`-p`, `-i`, `-x`, `-r`, `-f`, `-F`, `-a`, `-A`, `-n`), `read` (`-r`, `-p`, `-a`, `-d`, `-n`), `trap` (EXIT, ERR, INT, TERM, HUP, DEBUG, RETURN, `-p`), `alias`, `unalias`, `readonly`, `unset` (`-f`), `export`, `command` (`-v`, `-V`), `type` (`-t`), `shift`, `getopts`, `mapfile`/`readarray`, `wait` (`-n`), `jobs`, `kill` (`-l`), `bash`, `sh`, `source`/`.`
 
 ## Shell Features
 
 - **Pipes**: `cmd1 | cmd2 | cmd3`
 - **Chaining**: `cmd1 && cmd2`, `cmd1 || cmd2`, `cmd1; cmd2`
+- **Background execution**: `cmd &`, `jobs`, `wait`, `kill`
 - **Redirects**: `>` (overwrite), `>>` (append)
+- **Heredocs**: `<<EOF`, `<<-EOF`, `<<<`
+- **Command substitution**: `$(cmd)`, `` `cmd` ``
+- **Subshells**: `(cmd)`
+- **Process substitution**: `<(cmd)`, `>(cmd)`
 - **Variable expansion**: `$VAR`, `$HOME`, `$USER`, `$SHELL`
 - **Tilde expansion**: `~/file` expands to home directory
 - **Glob expansion**: `*.txt`, `src/*.rs`
+- **Extended globs**: `?(pat)`, `*(pat)`, `+(pat)`, `@(pat)`, `!(pat)`
+- **Brace expansion**: `{a,b,c}`, `{1..10}`
+- **Arithmetic expansion**: `$((expr))`, `(( ))` command
+- **C-style for loops**: `for((i=0;i<10;i++))`
+- **Case statements**: `case ... esac`
+- **Functions**: user-defined functions with `local`, `return`, positional params
+- **Arrays**: indexed arrays, associative arrays
+- **[[]] extended test**: regex matching `=~`, `BASH_REMATCH`
+- **Traps**: EXIT, ERR, INT, TERM, HUP, DEBUG, RETURN; `-p` display
+- **Namerefs**: `declare -n`
 - **Permission model**: Unix uid/gid with owner/group/other rwx enforcement
 - **Syntax highlighting**: language detection for `cat` output
 - **Command history**: `history` builtin; Up/Down arrow navigation in per-char animations
@@ -91,10 +110,9 @@ cargo test --all-features  # with serde, std
 
 ## Known Limitations
 
-- `grep` and `sed` use literal string matching, not regex
-- `diff` uses a naive line-by-line algorithm, not LCS
-- `tr` does not support character classes (`[:upper:]`) or ranges (`a-z`)
 - `su`/`sudo` have no authentication — any user can escalate
-- No job control (`bg`, `fg`, `jobs`, `kill`)
-- No heredocs, subshells, or `$()` command substitution
-- `sleep` is a no-op (WASM cannot block)
+- No real process forking — background jobs are simulated
+- No signal delivery — traps store handlers but INT/TERM don't fire
+- No `fg`/`bg` builtins
+- `sed` hold space, multi-line patterns, and labels not supported
+- `sleep` advances VFS time but cannot block real time

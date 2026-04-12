@@ -133,30 +133,31 @@ impl MemFs {
 mod tests {
     use super::*;
     use crate::error::VfsErrorKind;
+    use alloc::boxed::Box;
     use alloc::string::{String, ToString};
     use alloc::vec;
     use alloc::vec::Vec;
     use std::io::{Read, Write};
 
     #[test]
-    fn open_and_read() -> Result<(), VfsError> {
+    fn open_and_read() -> Result<(), Box<dyn std::error::Error>> {
         let mut fs = MemFs::new();
         fs.write("/f.txt", "hello".to_string())?;
-        let mut h = fs.open("/f.txt").unwrap();
+        let mut h = fs.open("/f.txt")?;
         let mut buf = String::new();
-        h.read_to_string(&mut buf).unwrap();
+        h.read_to_string(&mut buf)?;
         assert_eq!(buf, "hello");
         Ok(())
     }
 
     #[test]
-    fn open_and_seek() -> Result<(), VfsError> {
+    fn open_and_seek() -> Result<(), Box<dyn std::error::Error>> {
         let mut fs = MemFs::new();
         fs.write("/f.txt", "abcdef".to_string())?;
-        let mut h = fs.open("/f.txt").unwrap();
-        h.seek(SeekFrom::Start(3)).unwrap();
+        let mut h = fs.open("/f.txt")?;
+        h.seek(SeekFrom::Start(3))?;
         let mut buf = String::new();
-        h.read_to_string(&mut buf).unwrap();
+        h.read_to_string(&mut buf)?;
         assert_eq!(buf, "def");
         Ok(())
     }
@@ -164,117 +165,125 @@ mod tests {
     #[test]
     fn open_missing() {
         let fs = MemFs::new();
-        let err = fs.open("/nope").unwrap_err();
+        let err = match fs.open("/nope") {
+            Err(e) => e,
+            Ok(_) => {
+                assert!(false, "expected NotFound error");
+                return;
+            }
+        };
         assert_eq!(*err.kind(), VfsErrorKind::NotFound);
     }
 
     #[test]
-    fn open_permission_denied() -> Result<(), VfsError> {
+    fn open_permission_denied() -> Result<(), Box<dyn std::error::Error>> {
         let mut fs = MemFs::new();
         fs.write_with_mode("/secret", "x", 0o000)?;
         fs.set_current_user(1000, 1000);
-        let err = fs.open("/secret").unwrap_err();
+        let err = match fs.open("/secret") {
+            Err(e) => e,
+            Ok(_) => {
+                assert!(false, "expected PermissionDenied error");
+                return Ok(());
+            }
+        };
         assert_eq!(*err.kind(), VfsErrorKind::PermissionDenied);
         Ok(())
     }
 
     #[test]
-    fn open_binary() -> Result<(), VfsError> {
+    fn open_binary() -> Result<(), Box<dyn std::error::Error>> {
         let mut fs = MemFs::new();
         fs.write("/bin", vec![0u8, 1, 2, 0xFF])?;
-        let mut h = fs.open("/bin").unwrap();
+        let mut h = fs.open("/bin")?;
         let mut buf = Vec::new();
-        h.read_to_end(&mut buf).unwrap();
+        h.read_to_end(&mut buf)?;
         assert_eq!(buf, vec![0u8, 1, 2, 0xFF]);
         Ok(())
     }
 
     #[test]
-    fn handle_len_and_position() -> Result<(), VfsError> {
+    fn handle_len_and_position() -> Result<(), Box<dyn std::error::Error>> {
         let mut fs = MemFs::new();
         fs.write("/f.txt", "abc".to_string())?;
-        let mut h = fs.open("/f.txt").unwrap();
+        let mut h = fs.open("/f.txt")?;
         assert_eq!(h.len(), 3);
         assert!(!h.is_empty());
         assert_eq!(h.position(), 0);
         let mut buf = [0u8; 2];
-        h.read_exact(&mut buf).unwrap();
+        h.read_exact(&mut buf)?;
         assert_eq!(h.position(), 2);
         Ok(())
     }
 
     #[test]
-    fn into_inner() -> Result<(), VfsError> {
+    fn into_inner() -> Result<(), Box<dyn std::error::Error>> {
         let mut fs = MemFs::new();
         fs.write("/f.txt", "data".to_string())?;
-        let h = fs.open("/f.txt").unwrap();
+        let h = fs.open("/f.txt")?;
         assert_eq!(h.into_inner(), b"data");
         Ok(())
     }
 
     #[test]
-    fn write_and_commit() -> Result<(), VfsError> {
+    fn write_and_commit() -> Result<(), Box<dyn std::error::Error>> {
         let mut fs = MemFs::new();
         fs.write("/f.txt", "hello")?;
         let mut h = crate::open_options::OpenOptions::new()
             .read(true)
             .write(true)
-            .open(&mut fs, "/f.txt")
-            .unwrap();
+            .open(&mut fs, "/f.txt")?;
         // Seek to end and append
-        h.seek(SeekFrom::End(0)).unwrap();
-        h.write_all(b" world").unwrap();
+        h.seek(SeekFrom::End(0))?;
+        h.write_all(b" world")?;
         fs.commit("/f.txt", h)?;
-        assert_eq!(fs.read_to_string("/f.txt").unwrap(), "hello world");
+        assert_eq!(fs.read_to_string("/f.txt")?, "hello world");
         Ok(())
     }
 
     #[test]
-    fn write_at_position() -> Result<(), VfsError> {
+    fn write_at_position() -> Result<(), Box<dyn std::error::Error>> {
         let mut fs = MemFs::new();
         fs.write("/f.txt", "hello")?;
         let mut h = crate::open_options::OpenOptions::new()
             .read(true)
             .write(true)
-            .open(&mut fs, "/f.txt")
-            .unwrap();
-        h.seek(SeekFrom::Start(1)).unwrap();
-        h.write_all(b"a").unwrap();
+            .open(&mut fs, "/f.txt")?;
+        h.seek(SeekFrom::Start(1))?;
+        h.write_all(b"a")?;
         fs.commit("/f.txt", h)?;
-        assert_eq!(fs.read_to_string("/f.txt").unwrap(), "hallo");
+        assert_eq!(fs.read_to_string("/f.txt")?, "hallo");
         Ok(())
     }
 
     #[test]
-    fn write_extends_buffer() -> Result<(), VfsError> {
+    fn write_extends_buffer() -> Result<(), Box<dyn std::error::Error>> {
         let mut fs = MemFs::new();
         fs.write("/f.txt", "hi")?;
         let mut h = crate::open_options::OpenOptions::new()
             .read(true)
             .write(true)
-            .open(&mut fs, "/f.txt")
-            .unwrap();
-        h.seek(SeekFrom::End(0)).unwrap();
-        h.write_all(b"!!").unwrap();
+            .open(&mut fs, "/f.txt")?;
+        h.seek(SeekFrom::End(0))?;
+        h.write_all(b"!!")?;
         assert_eq!(h.len(), 4);
         fs.commit("/f.txt", h)?;
-        assert_eq!(fs.read_to_string("/f.txt").unwrap(), "hi!!");
+        assert_eq!(fs.read_to_string("/f.txt")?, "hi!!");
         Ok(())
     }
 
     #[test]
-    fn commit_to_different_path() -> Result<(), VfsError> {
+    fn commit_to_different_path() -> Result<(), Box<dyn std::error::Error>> {
         let mut fs = MemFs::new();
         fs.write("/src.txt", "original")?;
         // commit on a read-only handle is a no-op; use write handle for real commit
         let h = crate::open_options::OpenOptions::new()
             .read(true)
             .write(true)
-            .open(&mut fs, "/src.txt")
-            .unwrap();
+            .open(&mut fs, "/src.txt")?;
         fs.commit("/dst.txt", h)?;
-        assert_eq!(fs.read_to_string("/dst.txt").unwrap(), "original");
-        assert_eq!(fs.read_to_string("/src.txt").unwrap(), "original");
+        assert_eq!(fs.read_to_string("/dst.txt")?, "original");
+        assert_eq!(fs.read_to_string("/src.txt")?, "original");
         Ok(())
     }
 }

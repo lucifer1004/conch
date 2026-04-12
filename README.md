@@ -111,18 +111,19 @@ Use `terminal` for standalone terminal documents and screenshots. Use `terminal-
 
 ## Supported Commands
 
-80 commands across 8 categories:
+100+ commands across 9 categories:
 
-| Category       | Commands                                                                                                                                                                                                                        |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Filesystem** | `ls` (`-la`), `cat` (`-n`), `mkdir` (`-p`), `rmdir`, `touch`, `mktemp` (`-d`), `rm` (`-rf`), `cp` (`-r`), `mv`, `ln` (`-s`, hard links), `readlink` (`-f`), `find` (`-name`, `-type`), `tee` (`-a`), `chmod` (octal + symbolic) |
-| **Text**       | `echo` (`-e`, `-n`), `printf`, `head` (`-n`), `tail` (`-n`), `wc`, `grep` (`-invc`), `sort` (`-rn`), `uniq` (`-c`), `cut` (`-d`, `-f`), `tr` (`-d`), `rev`, `seq` (1-, 2-, 3-arg), `tac`, `nl`, `paste` (`-d`)                  |
-| **Transform**  | `sed` (`s///`, `s///g`, `-i`), `diff`, `xxd`, `base64` (`-d`)                                                                                                                                                                   |
-| **Inspect**    | `stat`, `test`/`[` (`-efdrwxs`, `=`, `!=`, `-eq`/`-ne`/`-lt`/`-gt`), `du` (`-sh`), `tree`                                                                                                                                       |
-| **Navigation** | `cd`, `pwd`, `basename`, `dirname`, `realpath`, `whoami`, `hostname`, `date`, `which`, `type`, `env`, `printenv`, `export`, `unset`, `sleep`, `history`                                                                         |
-| **User mgmt**  | `useradd`/`adduser`, `groupadd`/`addgroup`, `userdel`/`deluser`, `usermod` (`-aG`), `su` (`-`), `sudo`, `passwd`, `chown` (`-R`), `chgrp` (`-R`), `id`, `groups`                                                                |
-| **Scripting**  | `bash`/`sh`, `source`/`.`, `./script.sh`                                                                                                                                                                                        |
-| **Builtins**   | `clear`, `true`, `false`                                                                                                                                                                                                        |
+| Category       | Commands                                                                                                                                                                                                                                                                                                                                  |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Filesystem** | `ls` (`-alRht1`), `cat` (`-n`, `-`), `mkdir` (`-p`), `rmdir`, `touch`, `mktemp` (`-d`), `rm` (`-rf`), `cp` (`-rnp`), `mv`, `ln` (`-sf`), `readlink` (`-f`), `find` (`-name`, `-iname`, `-type`, `-path`, `-maxdepth`, `-exec`, `-delete`), `tee` (`-a`), `chmod` (`-R`, octal + symbolic), `chown` (`-R`), `chgrp` (`-R`), `id`, `groups` |
+| **Text**       | `echo` (`-en`), `printf` (width/precision/float), `head`/`tail` (`-n`, `+N`), `wc` (`-lwc`), `grep` (`-EivncloqwABC`), `sort` (`-rnukt`), `uniq` (`-cdu`), `cut` (`-dcf`), `tr` (`-ds`, ranges, POSIX classes), `rev`, `seq` (`-sw`, float), `tac`, `nl`, `paste` (`-ds`), `column` (`-t`), `xargs`                                       |
+| **Transform**  | `sed` (`-inE`, `s///`, `d`, `p`, `a\`/`i\`/`c\`, addresses, regex, backrefs), `diff` (`-uq`, LCS), `xxd`, `base64` (`-d`)                                                                                                                                                                                                                 |
+| **Inspect**    | `stat` (`-c`), `test`/`[` (`-efdrwxsLzn`, `-eq`/`-nt`/`-ot`, `-a`/`-o`, `!`), `[[ ]]` (`=~`, glob, `&&`/`\|\|`), `du` (`-shcd`), `tree` (`-La`, summary)                                                                                                                                                                                  |
+| **Navigation** | `cd` (`-`), `pushd`, `popd`, `dirs`, `pwd`, `basename`, `dirname`, `realpath`, `whoami`, `hostname`, `date` (`+FORMAT`), `which`, `type` (`-t`), `env`, `printenv`, `export`, `unset` (`-f`), `sleep` (suffixes)                                                                                                                          |
+| **User mgmt**  | `useradd`/`adduser`, `groupadd`/`addgroup`, `userdel`/`deluser`, `usermod` (`-aG`, `-G`), `su` (`-`, `-c`), `sudo` (`-u`), `passwd`                                                                                                                                                                                                       |
+| **Scripting**  | `bash`/`sh` (`-cex`), `source`/`.`, `./script.sh`, functions, `return`                                                                                                                                                                                                                                                                    |
+| **Process**    | `jobs`, `wait` (`-n`), `kill` (`-l`, signals), `ps`, `time`, `timeout`                                                                                                                                                                                                                                                                    |
+| **Builtins**   | `set` (`-euxoCf`), `declare`/`local` (`-piaAnrxfF`), `readonly`, `read` (`-rpadn`), `trap` (7 signals), `alias`/`unalias`, `eval`, `exec`, `command` (`-vV`), `let`, `getopts`, `mapfile`, `shift`, `true`, `false`, `shopt`, `umask`, `history`                                                                                          |
 
 ## Shell Features
 
@@ -160,6 +161,57 @@ echo "a"; echo "b"; echo "c"   # always run all
 echo "Hello, $USER!"
 echo "Shell: $SHELL"
 export MY_VAR=hello && echo $MY_VAR
+```
+
+### Background Jobs
+
+```shell
+sleep 10 &              # run in background
+jobs                    # list background jobs
+wait                    # wait for all background jobs
+kill %1                 # terminate job 1
+```
+
+### Functions & Control Flow
+
+```shell
+greet() { echo "Hello, $1!"; }
+greet world
+
+for i in 1 2 3; do echo $i; done
+for (( i=0; i<5; i++ )); do echo $i; done
+
+case "$1" in
+  start) echo "Starting";;
+  stop)  echo "Stopping";;
+  *)     echo "Unknown";;
+esac
+```
+
+### Arrays
+
+```shell
+arr=(a b c)
+echo ${arr[1]}          # b
+echo ${#arr[@]}         # 3
+declare -A map
+map[key]=value
+```
+
+### Arithmetic
+
+```shell
+echo $(( 2 + 3 ))      # 5
+(( x = 10 * 2 ))
+let "y = x + 1"
+```
+
+### Heredocs
+
+```shell
+cat <<EOF
+Hello, $USER!
+EOF
 ```
 
 ### Command History

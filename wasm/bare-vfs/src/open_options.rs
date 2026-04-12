@@ -167,18 +167,16 @@ impl Default for OpenOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::boxed::Box;
     use std::io::{Read, Seek, SeekFrom, Write};
 
     #[test]
-    fn open_read_only() -> Result<(), VfsError> {
+    fn open_read_only() -> Result<(), Box<dyn std::error::Error>> {
         let mut fs = MemFs::new();
         fs.write("/f.txt", "hello")?;
-        let mut handle = OpenOptions::new()
-            .read(true)
-            .open(&mut fs, "/f.txt")
-            .unwrap();
+        let mut handle = OpenOptions::new().read(true).open(&mut fs, "/f.txt")?;
         let mut buf = alloc::string::String::new();
-        handle.read_to_string(&mut buf).unwrap();
+        handle.read_to_string(&mut buf)?;
         assert_eq!(buf, "hello");
         Ok(())
     }
@@ -186,111 +184,120 @@ mod tests {
     #[test]
     fn open_missing_without_create_fails() {
         let mut fs = MemFs::new();
-        let err = OpenOptions::new()
-            .read(true)
-            .open(&mut fs, "/nope")
-            .unwrap_err();
+        let err = match OpenOptions::new().read(true).open(&mut fs, "/nope") {
+            Err(e) => e,
+            Ok(_) => {
+                assert!(false, "expected NotFound error");
+                return;
+            }
+        };
         assert_eq!(*err.kind(), VfsErrorKind::NotFound);
     }
 
     #[test]
-    fn open_create_new_file() -> Result<(), VfsError> {
+    fn open_create_new_file() -> Result<(), Box<dyn std::error::Error>> {
         let mut fs = MemFs::new();
         let mut handle = OpenOptions::new()
             .write(true)
             .create(true)
-            .open(&mut fs, "/new.txt")
-            .unwrap();
-        handle.write_all(b"created").unwrap();
+            .open(&mut fs, "/new.txt")?;
+        handle.write_all(b"created")?;
         fs.commit("/new.txt", handle)?;
-        assert_eq!(fs.read_to_string("/new.txt").unwrap(), "created");
+        assert_eq!(fs.read_to_string("/new.txt")?, "created");
         Ok(())
     }
 
     #[test]
-    fn open_create_new_fails_if_exists() -> Result<(), VfsError> {
+    fn open_create_new_fails_if_exists() -> Result<(), Box<dyn std::error::Error>> {
         let mut fs = MemFs::new();
         fs.write("/f.txt", "existing")?;
-        let err = OpenOptions::new()
+        let err = match OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&mut fs, "/f.txt")
-            .unwrap_err();
+        {
+            Err(e) => e,
+            Ok(_) => {
+                assert!(false, "expected AlreadyExists error");
+                return Ok(());
+            }
+        };
         assert_eq!(*err.kind(), VfsErrorKind::AlreadyExists);
         Ok(())
     }
 
     #[test]
-    fn open_truncate() -> Result<(), VfsError> {
+    fn open_truncate() -> Result<(), Box<dyn std::error::Error>> {
         let mut fs = MemFs::new();
         fs.write("/f.txt", "hello world")?;
         let handle = OpenOptions::new()
             .write(true)
             .truncate(true)
-            .open(&mut fs, "/f.txt")
-            .unwrap();
+            .open(&mut fs, "/f.txt")?;
         assert_eq!(handle.len(), 0);
         Ok(())
     }
 
     #[test]
-    fn open_append_seeks_to_end() -> Result<(), VfsError> {
+    fn open_append_seeks_to_end() -> Result<(), Box<dyn std::error::Error>> {
         let mut fs = MemFs::new();
         fs.write("/f.txt", "hello")?;
         let mut handle = OpenOptions::new()
             .write(true)
             .append(true)
-            .open(&mut fs, "/f.txt")
-            .unwrap();
+            .open(&mut fs, "/f.txt")?;
         assert_eq!(handle.position(), 5); // cursor at end
-        handle.write_all(b" world").unwrap();
+        handle.write_all(b" world")?;
         fs.commit("/f.txt", handle)?;
-        assert_eq!(fs.read_to_string("/f.txt").unwrap(), "hello world");
+        assert_eq!(fs.read_to_string("/f.txt")?, "hello world");
         Ok(())
     }
 
     #[test]
-    fn open_read_write() -> Result<(), VfsError> {
+    fn open_read_write() -> Result<(), Box<dyn std::error::Error>> {
         let mut fs = MemFs::new();
         fs.write("/f.txt", "hello")?;
         let mut handle = OpenOptions::new()
             .read(true)
             .write(true)
-            .open(&mut fs, "/f.txt")
-            .unwrap();
+            .open(&mut fs, "/f.txt")?;
         // Read first
         let mut buf = [0u8; 5];
-        handle.read_exact(&mut buf).unwrap();
+        handle.read_exact(&mut buf)?;
         assert_eq!(&buf, b"hello");
         // Seek back and overwrite
-        handle.seek(SeekFrom::Start(0)).unwrap();
-        handle.write_all(b"world").unwrap();
+        handle.seek(SeekFrom::Start(0))?;
+        handle.write_all(b"world")?;
         fs.commit("/f.txt", handle)?;
-        assert_eq!(fs.read_to_string("/f.txt").unwrap(), "world");
+        assert_eq!(fs.read_to_string("/f.txt")?, "world");
         Ok(())
     }
 
     #[test]
-    fn open_directory_fails() {
+    fn open_directory_fails() -> Result<(), Box<dyn std::error::Error>> {
         let mut fs = MemFs::new();
-        fs.create_dir("/d").unwrap();
-        let err = OpenOptions::new()
-            .read(true)
-            .open(&mut fs, "/d")
-            .unwrap_err();
+        fs.create_dir("/d")?;
+        let err = match OpenOptions::new().read(true).open(&mut fs, "/d") {
+            Err(e) => e,
+            Ok(_) => {
+                assert!(false, "expected IsADirectory error");
+                return Ok(());
+            }
+        };
         assert_eq!(*err.kind(), VfsErrorKind::IsADirectory);
+        Ok(())
     }
 
     #[test]
-    fn open_with_custom_mode() {
+    fn open_with_custom_mode() -> Result<(), Box<dyn std::error::Error>> {
         let mut fs = MemFs::new();
         fs.set_umask(0o000); // no masking
         OpenOptions::new()
             .write(true)
             .create(true)
             .mode(0o755)
-            .open(&mut fs, "/script.sh")
-            .unwrap();
-        assert_eq!(fs.metadata("/script.sh").unwrap().mode(), 0o755);
+            .open(&mut fs, "/script.sh")?;
+        assert_eq!(fs.metadata("/script.sh")?.mode(), 0o755);
+        Ok(())
     }
 }

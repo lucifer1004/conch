@@ -1,20 +1,24 @@
+//! In-memory user and group database for the virtual shell.
+
 use std::collections::BTreeMap;
 
+/// A passwd-style entry for a single user.
 pub struct UserEntry {
     pub uid: u32,
     pub name: String,
     pub gid: u32,
     pub home: String,
-    #[allow(dead_code)]
     pub shell: String,
 }
 
+/// A group entry mapping a GID to a name and member list.
 pub struct GroupEntry {
     pub gid: u32,
     pub name: String,
     pub members: Vec<String>,
 }
 
+/// Simulated `/etc/passwd` + `/etc/group` store with auto-incrementing IDs.
 pub struct UserDb {
     users: BTreeMap<u32, UserEntry>,
     groups: BTreeMap<u32, GroupEntry>,
@@ -220,6 +224,26 @@ impl UserDb {
             .get(&gid)
             .map(|g| g.name.clone())
             .unwrap_or_else(|| gid.to_string())
+    }
+
+    /// Set the login shell for an existing user.
+    pub fn set_user_shell(&mut self, name: &str, shell: String) {
+        if let Some(&uid) = self.name_to_uid.get(name) {
+            if let Some(entry) = self.users.get_mut(&uid) {
+                entry.shell = shell;
+            }
+        }
+    }
+
+    /// Remove a user from all supplementary groups (keeps primary group membership).
+    pub fn remove_user_from_supplementary_groups(&mut self, username: &str) {
+        let primary_gid = self.get_user_by_name(username).map(|u| u.gid);
+        for g in self.groups.values_mut() {
+            if primary_gid == Some(g.gid) {
+                continue;
+            }
+            g.members.retain(|m| m != username);
+        }
     }
 
     /// Get all groups a user belongs to (primary + supplementary).

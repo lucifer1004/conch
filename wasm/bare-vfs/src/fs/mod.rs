@@ -225,7 +225,10 @@ impl MemFs {
         }
 
         let now = self.tick();
-        let inode = self.inodes.get_mut(&ino).unwrap();
+        let inode = self
+            .inodes
+            .get_mut(&ino)
+            .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
         inode.uid = uid;
         inode.gid = gid;
         inode.ctime = now;
@@ -470,8 +473,9 @@ impl MemFs {
             // Replace root: transfer children concept not applicable, just replace
             // Keep root_ino pointing to old slot, swap inodes
             let old_root = self.inodes.remove(&self.root_ino);
-            let new_root = self.inodes.remove(&ino).unwrap();
-            self.inodes.insert(self.root_ino, new_root);
+            if let Some(new_root) = self.inodes.remove(&ino) {
+                self.inodes.insert(self.root_ino, new_root);
+            }
             // Clean up old root inode if needed
             drop(old_root);
             return;
@@ -554,8 +558,9 @@ impl MemFs {
         self.inodes.insert(ino, inode);
         if path == "/" {
             let old_root = self.inodes.remove(&self.root_ino);
-            let new_root = self.inodes.remove(&ino).unwrap();
-            self.inodes.insert(self.root_ino, new_root);
+            if let Some(new_root) = self.inodes.remove(&ino) {
+                self.inodes.insert(self.root_ino, new_root);
+            }
             drop(old_root);
             return;
         }
@@ -1235,7 +1240,10 @@ impl MemFs {
         if self.current_uid != 0 && self.current_uid != inode.uid {
             return Err(VfsErrorKind::PermissionDenied.into());
         }
-        let inode = self.inodes.get_mut(&ino).unwrap();
+        let inode = self
+            .inodes
+            .get_mut(&ino)
+            .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
         if let Some(m) = inode.mode_mut() {
             *m = mode;
         }
@@ -1421,7 +1429,10 @@ impl MemFs {
             .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
         children.insert(name, src_ino);
         // Increment nlink and update ctime
-        let inode = self.inodes.get_mut(&src_ino).unwrap();
+        let inode = self
+            .inodes
+            .get_mut(&src_ino)
+            .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
         inode.nlink += 1;
         inode.ctime = now;
         Ok(())

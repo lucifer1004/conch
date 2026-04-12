@@ -73,9 +73,9 @@ fn read_dir_iter_yields_entries() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/a", "x")?;
     fs.write("/b", "y")?;
-    fs.create_dir("/c").unwrap();
+    fs.create_dir("/c")?;
 
-    let entries: alloc::vec::Vec<_> = fs.read_dir_iter("/").unwrap().collect();
+    let entries: alloc::vec::Vec<_> = fs.read_dir_iter("/")?.collect();
     assert_eq!(entries.len(), 3);
     assert_eq!(entries[0].name, "a");
     assert_eq!(entries[1].name, "b");
@@ -89,7 +89,7 @@ fn read_dir_iter_exact_size() -> Result<(), VfsError> {
     fs.write("/a", "x")?;
     fs.write("/b", "y")?;
 
-    let iter = fs.read_dir_iter("/").unwrap();
+    let iter = fs.read_dir_iter("/")?;
     assert_eq!(iter.len(), 2);
     Ok(())
 }
@@ -104,7 +104,13 @@ fn read_dir_iter_not_found() {
 fn read_dir_iter_on_file() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/f", "x")?;
-    let err = fs.read_dir_iter("/f").unwrap_err();
+    let err = match fs.read_dir_iter("/f") {
+        Err(e) => e,
+        Ok(_) => {
+            assert!(false, "expected NotADirectory error");
+            return Ok(());
+        }
+    };
     assert_eq!(*err.kind(), VfsErrorKind::NotADirectory);
     Ok(())
 }
@@ -131,7 +137,7 @@ fn iter_prefix_subtree() -> Result<(), VfsError> {
 fn iter_prefix_root_equals_iter() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/a", "x")?;
-    fs.create_dir("/d").unwrap();
+    fs.create_dir("/d")?;
     let all = fs.iter();
     let root = fs.iter_prefix("/");
     assert_eq!(all.len(), root.len());
@@ -171,12 +177,21 @@ fn paths_prefix_subtree() -> Result<(), VfsError> {
 fn dir_entry_symlink_flag() -> Result<(), VfsError> {
     let mut fs = MemFs::new();
     fs.write("/file", "x")?;
-    fs.create_dir("/dir").unwrap();
-    fs.symlink("/file", "/link").unwrap();
-    let entries = fs.read_dir("/").unwrap();
-    let dir_e = entries.iter().find(|e| e.name == "dir").unwrap();
-    let file_e = entries.iter().find(|e| e.name == "file").unwrap();
-    let link_e = entries.iter().find(|e| e.name == "link").unwrap();
+    fs.create_dir("/dir")?;
+    fs.symlink("/file", "/link")?;
+    let entries = fs.read_dir("/")?;
+    let dir_e = entries
+        .iter()
+        .find(|e| e.name == "dir")
+        .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
+    let file_e = entries
+        .iter()
+        .find(|e| e.name == "file")
+        .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
+    let link_e = entries
+        .iter()
+        .find(|e| e.name == "link")
+        .ok_or(VfsError::from(VfsErrorKind::NotFound))?;
     assert!(!dir_e.is_symlink);
     assert!(!file_e.is_symlink);
     assert!(link_e.is_symlink);

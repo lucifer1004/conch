@@ -1,5 +1,9 @@
 use super::*;
 
+// ---------------------------------------------------------------------------
+// cat
+// ---------------------------------------------------------------------------
+
 #[test]
 fn cat_reads_seeded_file() {
     let mut s = shell_with_files(serde_json::json!({
@@ -42,12 +46,40 @@ fn cat_n_shows_line_numbers() {
 }
 
 #[test]
+fn cat_multiple_files_no_extra_newline() {
+    let mut s = shell_with_files(serde_json::json!({"a.txt": "hello\n", "b.txt": "world\n"}));
+    let (out, code, _) = s.run_line("cat a.txt b.txt");
+    assert_eq!(code, 0);
+    assert_eq!(out, "hello\nworld\n");
+}
+
+#[test]
+fn cat_dash_reads_stdin() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("echo hello | cat -");
+    assert_eq!(code, 0);
+    assert_eq!(out, "hello\n");
+}
+
+#[test]
+fn cat_dash_concatenates_stdin_and_file() {
+    let mut s = shell_with_files(serde_json::json!({"f.txt": "world\n"}));
+    let (out, code, _) = s.run_line("echo hello | cat - f.txt");
+    assert_eq!(code, 0);
+    assert_eq!(out, "hello\nworld\n");
+}
+
+// ---------------------------------------------------------------------------
+// chmod
+// ---------------------------------------------------------------------------
+
+#[test]
 fn chmod_restores_read_then_cat_succeeds() {
     let mut s = shell_with_files(serde_json::json!({
         "sec.txt": { "content": "ok", "mode": 0 }
     }));
     let (_, c1, _) = s.run_line("cat sec.txt");
-    assert_ne!(c1, 0);
+    assert_eq!(c1, 1);
     let (_, c2, _) = s.run_line("chmod 644 sec.txt");
     assert_eq!(c2, 0);
     let (out, c3, _) = s.run_line("cat sec.txt");
@@ -70,6 +102,20 @@ fn chmod_invalid_mode() {
     assert_eq!(code, 1);
     assert!(out.contains("invalid mode"), "got {:?}", out);
 }
+
+#[test]
+fn chmod_symbolic_plus_x() {
+    let mut s = shell();
+    s.run_line("touch f.txt");
+    let (_, code, _) = s.run_line("chmod +x f.txt");
+    assert_eq!(code, 0);
+    let (out, _, _) = s.run_line("stat f.txt");
+    assert!(out.contains("x"), "should have execute bit: {out}");
+}
+
+// ---------------------------------------------------------------------------
+// mkdir
+// ---------------------------------------------------------------------------
 
 #[test]
 fn mkdir_touch_ls_lists_new_file() {
@@ -108,6 +154,10 @@ fn mkdir_p_nested() {
     assert!(listing.contains("z"), "got {:?}", listing);
 }
 
+// ---------------------------------------------------------------------------
+// touch
+// ---------------------------------------------------------------------------
+
 #[test]
 fn touch_creates_empty_file_then_cat() {
     let mut s = shell();
@@ -117,6 +167,10 @@ fn touch_creates_empty_file_then_cat() {
     assert_eq!(c2, 0);
     assert_eq!(out, "");
 }
+
+// ---------------------------------------------------------------------------
+// cp
+// ---------------------------------------------------------------------------
 
 #[test]
 fn cp_copies_file() {
@@ -171,6 +225,57 @@ fn cp_source_directory_omits() {
 }
 
 #[test]
+fn cp_multiple_sources_to_dir() {
+    let mut s = shell();
+    s.run_line("echo a > a.txt");
+    s.run_line("echo b > b.txt");
+    s.run_line("mkdir dest");
+    let (_, code, _) = s.run_line("cp a.txt b.txt dest");
+    assert_eq!(code, 0);
+    let (a, _, _) = s.run_line("cat dest/a.txt");
+    let (b, _, _) = s.run_line("cat dest/b.txt");
+    assert_eq!(a, "a\n");
+    assert_eq!(b, "b\n");
+}
+
+#[test]
+fn cp_r_copies_directory() {
+    let mut s = shell();
+    s.run_line("mkdir -p src/sub");
+    s.run_line("echo hello > src/file.txt");
+    s.run_line("echo world > src/sub/deep.txt");
+    let (_, code, _) = s.run_line("cp -r src dst");
+    assert_eq!(code, 0);
+    let (out, _, _) = s.run_line("cat dst/file.txt");
+    assert_eq!(out, "hello\n");
+    let (out2, _, _) = s.run_line("cat dst/sub/deep.txt");
+    assert_eq!(out2, "world\n");
+}
+
+#[test]
+fn cp_r_on_file_works_like_regular_cp() {
+    let mut s = shell();
+    s.run_line("echo data > a.txt");
+    let (_, code, _) = s.run_line("cp -r a.txt b.txt");
+    assert_eq!(code, 0);
+    let (out, _, _) = s.run_line("cat b.txt");
+    assert_eq!(out, "data\n");
+}
+
+#[test]
+fn cp_without_r_rejects_directory() {
+    let mut s = shell();
+    s.run_line("mkdir d");
+    let (out, code, _) = s.run_line("cp d d2");
+    assert_eq!(code, 1);
+    assert!(out.contains("omitting directory"), "got: {out}");
+}
+
+// ---------------------------------------------------------------------------
+// mv
+// ---------------------------------------------------------------------------
+
+#[test]
 fn mv_removes_source() {
     let mut s = shell_with_files(serde_json::json!({
         "a.txt": "moved"
@@ -178,11 +283,45 @@ fn mv_removes_source() {
     let (_, c1, _) = s.run_line("mv a.txt z.txt");
     assert_eq!(c1, 0);
     let (_, c2, _) = s.run_line("cat a.txt");
-    assert_ne!(c2, 0);
+    assert_eq!(c2, 1);
     let (out, c3, _) = s.run_line("cat z.txt");
     assert_eq!(c3, 0);
     assert_eq!(out, "moved");
 }
+
+#[test]
+fn mv_into_directory() {
+    let mut s = shell_with_files(serde_json::json!({"src.txt": "data"}));
+    s.run_line("mkdir dest");
+    let (_, code, _) = s.run_line("mv src.txt dest");
+    assert_eq!(code, 0);
+    let (out, c2, _) = s.run_line("cat dest/src.txt");
+    assert_eq!(c2, 0);
+    assert_eq!(out, "data");
+}
+
+#[test]
+fn mv_multiple_sources_to_dir() {
+    let mut s = shell_with_files(serde_json::json!({"a.txt": "aaa", "b.txt": "bbb"}));
+    s.run_line("mkdir dest");
+    let (_, code, _) = s.run_line("mv a.txt b.txt dest");
+    assert_eq!(code, 0);
+    let (a, ca, _) = s.run_line("cat dest/a.txt");
+    assert_eq!(ca, 0);
+    assert_eq!(a, "aaa");
+    let (b, cb, _) = s.run_line("cat dest/b.txt");
+    assert_eq!(cb, 0);
+    assert_eq!(b, "bbb");
+    // sources removed
+    let (_, gone_a, _) = s.run_line("cat a.txt");
+    assert_eq!(gone_a, 1);
+    let (_, gone_b, _) = s.run_line("cat b.txt");
+    assert_eq!(gone_b, 1);
+}
+
+// ---------------------------------------------------------------------------
+// rm / rmdir
+// ---------------------------------------------------------------------------
 
 #[test]
 fn rm_removes_file() {
@@ -192,7 +331,7 @@ fn rm_removes_file() {
     let (_, c1, _) = s.run_line("rm gone.txt");
     assert_eq!(c1, 0);
     let (_, c2, _) = s.run_line("cat gone.txt");
-    assert_ne!(c2, 0);
+    assert_eq!(c2, 1);
 }
 
 #[test]
@@ -219,8 +358,129 @@ fn rm_rf_removes_directory_tree() {
     assert_eq!(s.run_line("touch tree/sub/f.txt").1, 0);
     assert_eq!(s.run_line("rm -rf tree").1, 0);
     let (_, code, _) = s.run_line("ls tree");
-    assert_ne!(code, 0);
+    assert_eq!(code, 2);
 }
+
+#[test]
+fn rm_rf_nonexistent_with_force_succeeds() {
+    let mut s = shell();
+    let (_, code, _) = s.run_line("rm -rf nonexistent_dir");
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn rmdir_removes_empty_dir() {
+    let mut s = shell();
+    s.run_line("mkdir emptydir");
+    let (_, code, _) = s.run_line("rmdir emptydir");
+    assert_eq!(code, 0);
+    let (_, ls_code, _) = s.run_line("ls emptydir");
+    assert_eq!(ls_code, 2);
+}
+
+#[test]
+fn rmdir_fails_on_nonempty_dir() {
+    let mut s = shell_with_files(serde_json::json!({ "filled/a.txt": "x" }));
+    let (out, code, _) = s.run_line("rmdir filled");
+    assert_eq!(code, 1);
+    assert!(
+        out.contains("not empty") || out.contains("Directory"),
+        "got {:?}",
+        out
+    );
+}
+
+#[test]
+fn rmdir_fails_on_missing_dir() {
+    let mut s = shell();
+    let (_, code, _) = s.run_line("rmdir nosuchdir");
+    assert_eq!(code, 1);
+}
+
+#[test]
+fn rmdir_fails_on_nonempty_uses_is_empty_dir() {
+    let mut s = shell();
+    s.run_line("mkdir -p d/sub");
+    let (out, code, _) = s.run_line("rmdir d");
+    assert_eq!(code, 1);
+    assert!(
+        out.contains("not empty") || out.contains("Directory not empty"),
+        "got: {out}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// ls
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ls_missing_path() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("ls ghost_dir");
+    assert_eq!(code, 2);
+    assert!(
+        out.contains("cannot access") || out.contains("No such file"),
+        "got {:?}",
+        out
+    );
+}
+
+#[test]
+fn ls_multiple_paths() {
+    let mut s = shell();
+    s.run_line("mkdir d1 d2");
+    s.run_line("touch d1/a d2/b");
+    let (out, code, _) = s.run_line("ls d1 d2");
+    assert_eq!(code, 0);
+    assert!(out.contains("a"), "should list d1 contents: {out}");
+    assert!(out.contains("b"), "should list d2 contents: {out}");
+}
+
+#[test]
+fn ls_long_shows_size_and_nlink() {
+    let mut s = shell();
+    s.run_line("echo hello > f.txt");
+    let (out, code, _) = s.run_line("ls -l");
+    assert_eq!(code, 0);
+    assert!(out.contains("1"), "expected nlink in output: {out}");
+    assert!(
+        out.contains("5") || out.contains("6"),
+        "expected file size in output: {out}"
+    );
+}
+
+#[test]
+fn ls_long_shows_symlink_type() {
+    let mut s = shell();
+    s.run_line("echo x > target.txt");
+    s.run_line("ln -s target.txt link.txt");
+    let (out, code, _) = s.run_line("ls -l");
+    assert_eq!(code, 0);
+    assert!(
+        out.contains("l"),
+        "expected symlink type 'l' in output: {out}"
+    );
+}
+
+#[test]
+fn ls_long_symlink_to_dir_shows_l() {
+    let mut s = shell();
+    s.run_line("mkdir realdir");
+    s.run_line("ln -s realdir linkdir");
+    let (out, code, _) = s.run_line("ls -l");
+    assert_eq!(code, 0);
+    let link_line = out.lines().find(|l| l.contains("linkdir"));
+    assert!(link_line.is_some(), "linkdir not in ls output: {out}");
+    let ll = link_line.unwrap_or("");
+    assert!(
+        ll.starts_with('l'),
+        "symlink line should start with 'l', got: {ll}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// find
+// ---------------------------------------------------------------------------
 
 #[test]
 fn find_name_filter() {
@@ -243,40 +503,43 @@ fn find_missing_root() {
 }
 
 #[test]
-fn ls_missing_path() {
+fn find_path_first_arg() {
     let mut s = shell();
-    let (out, code, _) = s.run_line("ls ghost_dir");
-    assert_eq!(code, 2);
-    assert!(
-        out.contains("cannot access") || out.contains("No such file"),
-        "got {:?}",
-        out
-    );
+    s.run_line("mkdir -p d/sub");
+    s.run_line("touch d/sub/f.txt");
+    let (out, code, _) = s.run_line("find d -type f");
+    assert_eq!(code, 0);
+    assert!(out.contains("f.txt"), "got: {out}");
 }
 
 #[test]
-fn glob_expansion_matches_files() {
-    let mut s = shell_with_files(serde_json::json!({
-        "a.txt": "aa",
-        "b.txt": "bb",
-        "c.rs": "cc"
-    }));
-    let (out, code, _) = s.run_line("echo *.txt");
+fn find_in_subtree() {
+    let mut s = shell();
+    s.run_line("mkdir -p a/b");
+    s.run_line("echo x > a/b/f.txt");
+    s.run_line("echo y > other.txt");
+    let (out, code, _) = s.run_line("find a -name f.txt");
     assert_eq!(code, 0);
-    assert!(out.contains("a.txt"), "got {:?}", out);
-    assert!(out.contains("b.txt"), "got {:?}", out);
-    assert!(!out.contains("c.rs"), "got {:?}", out);
+    assert!(out.contains("f.txt"), "got: {out}");
+    assert!(
+        !out.contains("other.txt"),
+        "should not find other.txt: {out}"
+    );
 }
+
+// ---------------------------------------------------------------------------
+// tee
+// ---------------------------------------------------------------------------
 
 #[test]
 fn tee_writes_file_and_passes_through() {
     let mut s = shell();
     let (out, code, _) = s.run_line("echo hello | tee copy.txt");
     assert_eq!(code, 0);
-    assert_eq!(out, "hello");
+    assert_eq!(out, "hello\n");
     let (content, c2, _) = s.run_line("cat copy.txt");
     assert_eq!(c2, 0);
-    assert_eq!(content, "hello");
+    assert_eq!(content, "hello\n");
 }
 
 #[test]
@@ -302,6 +565,31 @@ fn tee_rejects_read_only_target() {
 }
 
 #[test]
+fn tee_multiple_files() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("echo hello | tee a.txt b.txt");
+    assert_eq!(code, 0);
+    assert_eq!(out, "hello\n");
+    let (a, _, _) = s.run_line("cat a.txt");
+    let (b, _, _) = s.run_line("cat b.txt");
+    assert_eq!(a, "hello\n");
+    assert_eq!(b, "hello\n");
+}
+
+#[test]
+fn tee_append_no_extra_newline() {
+    let mut s = shell();
+    s.run_line("echo -n hello | tee f.txt");
+    s.run_line("echo -n world | tee -a f.txt");
+    let (out, _, _) = s.run_line("cat f.txt");
+    assert_eq!(out, "helloworld");
+}
+
+// ---------------------------------------------------------------------------
+// ln (symlinks and hard links)
+// ---------------------------------------------------------------------------
+
+#[test]
 fn ln_s_creates_symlink_and_cat_reads_through() {
     let mut s = shell_with_files(serde_json::json!({
         "real.txt": "hello"
@@ -321,7 +609,7 @@ fn readlink_shows_target() {
     s.run_line("ln -s real.txt link.txt");
     let (out, code, _) = s.run_line("readlink link.txt");
     assert_eq!(code, 0);
-    assert_eq!(out, "real.txt");
+    assert_eq!(out, "real.txt\n");
 }
 
 #[test]
@@ -344,33 +632,93 @@ fn ln_s_existing_target_fails() {
 }
 
 #[test]
-fn rmdir_removes_empty_dir() {
+fn ln_s_symlink_to_dir_and_ls() {
     let mut s = shell();
-    s.run_line("mkdir emptydir");
-    let (_, code, _) = s.run_line("rmdir emptydir");
+    s.run_line("mkdir mydir");
+    s.run_line("touch mydir/a.txt");
+    let (_, c, _) = s.run_line("ln -s mydir link");
+    assert_eq!(c, 0);
+    let (out, code, _) = s.run_line("ls link");
     assert_eq!(code, 0);
-    let (_, ls_code, _) = s.run_line("ls emptydir");
-    assert_ne!(ls_code, 0);
+    assert!(out.contains("a.txt"), "got {:?}", out);
 }
 
 #[test]
-fn rmdir_fails_on_nonempty_dir() {
-    let mut s = shell_with_files(serde_json::json!({ "filled/a.txt": "x" }));
-    let (out, code, _) = s.run_line("rmdir filled");
-    assert_ne!(code, 0);
+fn ln_s_dangling_symlink() {
+    let mut s = shell();
+    s.run_line("ln -s nowhere.txt dangling");
+    let (out, code, _) = s.run_line("cat dangling");
+    assert_eq!(code, 1);
+    assert!(out.contains("No such file"), "got {:?}", out);
+}
+
+#[test]
+fn readlink_non_symlink_fails() {
+    let mut s = shell_with_files(serde_json::json!({"f.txt": "x"}));
+    let (_, code, _) = s.run_line("readlink f.txt");
+    assert_eq!(code, 1);
+}
+
+#[test]
+fn readlink_missing_fails() {
+    let mut s = shell();
+    let (_, code, _) = s.run_line("readlink nope");
+    assert_eq!(code, 1);
+}
+
+#[test]
+fn ln_s_intermediate_symlink() {
+    let mut s = shell_with_files(serde_json::json!({"sub/file.txt": "content"}));
+    s.run_line("ln -s /home/u/sub link");
+    let (out, code, _) = s.run_line("cat link/file.txt");
+    assert_eq!(code, 0);
+    assert_eq!(out, "content");
+}
+
+#[test]
+fn ln_hard_link_creates_shared_file() {
+    let mut s = shell();
+    s.run_line("echo hello > orig.txt");
+    let (out, code, _) = s.run_line("ln orig.txt link.txt");
+    assert_eq!(code, 0);
+    assert_eq!(out, "");
+    let (content, _, _) = s.run_line("cat link.txt");
+    assert_eq!(content, "hello\n");
+}
+
+#[test]
+fn ln_hard_link_shares_content_via_append() {
+    let mut s = shell();
+    s.run_line("echo hello > orig.txt");
+    s.run_line("ln orig.txt link.txt");
+    s.run_line("echo world >> orig.txt");
+    let (content, _, _) = s.run_line("cat link.txt");
+    assert!(content.contains("hello"), "got: {content}");
+    assert!(content.contains("world"), "got: {content}");
+}
+
+#[test]
+fn ln_hard_link_to_directory_fails() {
+    let mut s = shell();
+    s.run_line("mkdir mydir");
+    let (out, code, _) = s.run_line("ln mydir link");
+    assert_eq!(code, 1);
     assert!(
-        out.contains("not empty") || out.contains("Directory"),
-        "got {:?}",
-        out
+        out.contains("Permission denied") || out.contains("denied"),
+        "got: {out}"
     );
 }
 
 #[test]
-fn rmdir_fails_on_missing_dir() {
+fn ln_hard_link_to_missing_source_fails() {
     let mut s = shell();
-    let (_, code, _) = s.run_line("rmdir nosuchdir");
-    assert_ne!(code, 0);
+    let (_, code, _) = s.run_line("ln nope.txt link.txt");
+    assert_eq!(code, 1);
 }
+
+// ---------------------------------------------------------------------------
+// mktemp
+// ---------------------------------------------------------------------------
 
 #[test]
 fn mktemp_creates_file() {
@@ -378,7 +726,6 @@ fn mktemp_creates_file() {
     let (out, code, _) = s.run_line("mktemp");
     assert_eq!(code, 0);
     assert!(out.starts_with("/tmp/tmp."), "got {:?}", out);
-    // file should exist
     let (_, cat_code, _) = s.run_line(&format!("cat {}", out.trim()));
     assert_eq!(cat_code, 0);
 }
@@ -389,7 +736,6 @@ fn mktemp_d_creates_directory() {
     let (out, code, _) = s.run_line("mktemp -d");
     assert_eq!(code, 0);
     assert!(out.starts_with("/tmp/tmp."), "got {:?}", out);
-    // directory should exist — cd into it
     let (_, cd_code, _) = s.run_line(&format!("cd {}", out.trim()));
     assert_eq!(cd_code, 0);
 }
@@ -401,6 +747,21 @@ fn mktemp_names_are_unique() {
     let (out2, _, _) = s.run_line("mktemp");
     assert_ne!(out1.trim(), out2.trim(), "mktemp names should differ");
 }
+
+#[test]
+fn mktemp_no_collision_after_delete() {
+    let mut s = shell();
+    let (path1, code1, _) = s.run_line("mktemp");
+    assert_eq!(code1, 0);
+    s.run_line(&format!("rm {}", path1.trim()));
+    let (path2, code2, _) = s.run_line("mktemp");
+    assert_eq!(code2, 0);
+    assert_ne!(path1.trim(), path2.trim(), "should not reuse deleted name");
+}
+
+// ---------------------------------------------------------------------------
+// chown / chgrp
+// ---------------------------------------------------------------------------
 
 #[test]
 fn chown_changes_file_owner() {
@@ -446,46 +807,6 @@ fn chgrp_changes_file_group() {
     );
 }
 
-// ln: symlink to directory
-#[test]
-fn ln_s_symlink_to_dir_and_ls() {
-    let mut s = shell();
-    s.run_line("mkdir mydir");
-    s.run_line("touch mydir/a.txt");
-    let (_, c, _) = s.run_line("ln -s mydir link");
-    assert_eq!(c, 0);
-    let (out, code, _) = s.run_line("ls link");
-    assert_eq!(code, 0);
-    assert!(out.contains("a.txt"), "got {:?}", out);
-}
-
-// ln: dangling symlink
-#[test]
-fn ln_s_dangling_symlink() {
-    let mut s = shell();
-    s.run_line("ln -s nowhere.txt dangling");
-    let (out, code, _) = s.run_line("cat dangling");
-    assert_ne!(code, 0);
-    assert!(out.contains("No such file"), "got {:?}", out);
-}
-
-// readlink on non-symlink
-#[test]
-fn readlink_non_symlink_fails() {
-    let mut s = shell_with_files(serde_json::json!({"f.txt": "x"}));
-    let (_, code, _) = s.run_line("readlink f.txt");
-    assert_ne!(code, 0);
-}
-
-// readlink on missing
-#[test]
-fn readlink_missing_fails() {
-    let mut s = shell();
-    let (_, code, _) = s.run_line("readlink nope");
-    assert_ne!(code, 0);
-}
-
-// chown -R recursive
 #[test]
 fn chown_recursive() {
     let mut s = shell();
@@ -497,22 +818,11 @@ fn chown_recursive() {
     assert!(out.contains("2000"), "got {:?}", out);
 }
 
-// chown missing file
 #[test]
 fn chown_missing_fails() {
     let mut s = shell();
     let (_, code, _) = s.run_line("chown 1000 nope.txt");
-    assert_ne!(code, 0);
-}
-
-#[test]
-fn ln_s_intermediate_symlink() {
-    // /link -> /dir, then cat /link/file.txt should work
-    let mut s = shell_with_files(serde_json::json!({"sub/file.txt": "content"}));
-    s.run_line("ln -s /home/u/sub link");
-    let (out, code, _) = s.run_line("cat link/file.txt");
-    assert_eq!(code, 0);
-    assert_eq!(out, "content");
+    assert_eq!(code, 1);
 }
 
 #[test]
@@ -525,143 +835,9 @@ fn chown_numeric_ids() {
     assert!(out.contains("3000"), "got {:?}", out);
 }
 
-#[test]
-fn mv_into_directory() {
-    let mut s = shell_with_files(serde_json::json!({"src.txt": "data"}));
-    s.run_line("mkdir dest");
-    let (_, code, _) = s.run_line("mv src.txt dest");
-    assert_eq!(code, 0);
-    let (out, c2, _) = s.run_line("cat dest/src.txt");
-    assert_eq!(c2, 0);
-    assert_eq!(out, "data");
-}
-
-#[test]
-fn tee_multiple_files() {
-    let mut s = shell();
-    let (out, code, _) = s.run_line("echo hello | tee a.txt b.txt");
-    assert_eq!(code, 0);
-    assert_eq!(out, "hello");
-    let (a, _, _) = s.run_line("cat a.txt");
-    let (b, _, _) = s.run_line("cat b.txt");
-    assert_eq!(a, "hello");
-    assert_eq!(b, "hello");
-}
-
-// -- Hard link tests --------------------------------------------------------
-
-#[test]
-fn ln_hard_link_creates_shared_file() {
-    let mut s = shell();
-    s.run_line("echo hello > orig.txt");
-    let (out, code, _) = s.run_line("ln orig.txt link.txt");
-    assert_eq!(code, 0);
-    assert_eq!(out, "");
-    let (content, _, _) = s.run_line("cat link.txt");
-    assert_eq!(content, "hello");
-}
-
-#[test]
-fn ln_hard_link_shares_content_via_append() {
-    let mut s = shell();
-    s.run_line("echo hello > orig.txt");
-    s.run_line("ln orig.txt link.txt");
-    s.run_line("echo world >> orig.txt");
-    let (content, _, _) = s.run_line("cat link.txt");
-    assert!(content.contains("hello"), "got: {content}");
-    assert!(content.contains("world"), "got: {content}");
-}
-
-#[test]
-fn ln_hard_link_to_directory_fails() {
-    let mut s = shell();
-    s.run_line("mkdir mydir");
-    let (out, code, _) = s.run_line("ln mydir link");
-    assert_ne!(code, 0);
-    assert!(
-        out.contains("Permission denied") || out.contains("denied"),
-        "got: {out}"
-    );
-}
-
-#[test]
-fn ln_hard_link_to_missing_source_fails() {
-    let mut s = shell();
-    let (_, code, _) = s.run_line("ln nope.txt link.txt");
-    assert_ne!(code, 0);
-}
-
-// -- ls -l enriched output --------------------------------------------------
-
-#[test]
-fn ls_long_shows_size_and_nlink() {
-    let mut s = shell();
-    s.run_line("echo hello > f.txt");
-    let (out, code, _) = s.run_line("ls -l");
-    assert_eq!(code, 0);
-    // Should contain nlink count and file size
-    assert!(out.contains("1"), "expected nlink in output: {out}");
-    assert!(
-        out.contains("5") || out.contains("6"),
-        "expected file size in output: {out}"
-    );
-}
-
-#[test]
-fn ls_long_shows_symlink_type() {
-    let mut s = shell();
-    s.run_line("echo x > target.txt");
-    s.run_line("ln -s target.txt link.txt");
-    let (out, code, _) = s.run_line("ls -l");
-    assert_eq!(code, 0);
-    assert!(
-        out.contains("l"),
-        "expected symlink type 'l' in output: {out}"
-    );
-}
-
-// -- stat enriched output ---------------------------------------------------
-
-#[test]
-fn stat_shows_inode_and_links() {
-    let mut s = shell();
-    s.run_line("echo data > f.txt");
-    let (out, code, _) = s.run_line("stat f.txt");
-    assert_eq!(code, 0);
-    assert!(
-        out.contains("Inode:"),
-        "expected Inode in stat output: {out}"
-    );
-    assert!(
-        out.contains("Links:"),
-        "expected Links in stat output: {out}"
-    );
-}
-
-#[test]
-fn stat_hard_link_shows_nlink_2() {
-    let mut s = shell();
-    s.run_line("echo data > a.txt");
-    s.run_line("ln a.txt b.txt");
-    let (out, _, _) = s.run_line("stat a.txt");
-    assert!(out.contains("Links: 2"), "expected nlink=2 in stat: {out}");
-}
-
-// -- rmdir uses is_empty_dir ------------------------------------------------
-
-#[test]
-fn rmdir_fails_on_nonempty_uses_is_empty_dir() {
-    let mut s = shell();
-    s.run_line("mkdir -p d/sub");
-    let (out, code, _) = s.run_line("rmdir d");
-    assert_ne!(code, 0);
-    assert!(
-        out.contains("not empty") || out.contains("Directory not empty"),
-        "got: {out}"
-    );
-}
-
-// -- realpath resolves symlinks ---------------------------------------------
+// ---------------------------------------------------------------------------
+// realpath
+// ---------------------------------------------------------------------------
 
 #[test]
 fn realpath_resolves_symlink() {
@@ -674,38 +850,10 @@ fn realpath_resolves_symlink() {
     assert!(out.trim().ends_with("/real/dir/file.txt"), "got: {out}");
 }
 
-// -- find uses walk_prefix --------------------------------------------------
+// ---------------------------------------------------------------------------
+// sed -i (filesystem side-effect)
+// ---------------------------------------------------------------------------
 
-// --- H1: cat joins files with \n — should concatenate raw ---
-#[test]
-fn cat_multiple_files_no_extra_newline() {
-    let mut s = shell_with_files(serde_json::json!({"a.txt": "hello\n", "b.txt": "world\n"}));
-    let (out, code, _) = s.run_line("cat a.txt b.txt");
-    assert_eq!(code, 0);
-    assert_eq!(out, "hello\nworld\n"); // no double newline between files
-}
-
-// --- H3: ls ignores paths after first ---
-#[test]
-fn ls_multiple_paths() {
-    let mut s = shell();
-    s.run_line("mkdir d1 d2");
-    s.run_line("touch d1/a d2/b");
-    let (out, code, _) = s.run_line("ls d1 d2");
-    assert_eq!(code, 0);
-    assert!(out.contains("a"), "should list d1 contents: {out}");
-    assert!(out.contains("b"), "should list d2 contents: {out}");
-}
-
-// --- H4: rm -rf swallows errors ---
-#[test]
-fn rm_rf_nonexistent_with_force_succeeds() {
-    let mut s = shell();
-    let (_, code, _) = s.run_line("rm -rf nonexistent_dir");
-    assert_eq!(code, 0);
-}
-
-// --- H5: sed -i leaks content to stdout ---
 #[test]
 fn sed_i_no_stdout() {
     let mut s = shell_with_files(serde_json::json!({"f.txt": "hello world"}));
@@ -716,127 +864,323 @@ fn sed_i_no_stdout() {
     assert_eq!(content, "bye world");
 }
 
-// --- H6: mktemp name collision after delete ---
-#[test]
-fn mktemp_no_collision_after_delete() {
-    let mut s = shell();
-    let (path1, code1, _) = s.run_line("mktemp");
-    assert_eq!(code1, 0);
-    s.run_line(&format!("rm {}", path1.trim()));
-    let (path2, code2, _) = s.run_line("mktemp");
-    assert_eq!(code2, 0);
-    assert_ne!(path1.trim(), path2.trim(), "should not reuse deleted name");
-}
+// ---------------------------------------------------------------------------
+// chmod -R (recursive)
+// ---------------------------------------------------------------------------
 
-// --- M1: cp multiple sources to directory ---
 #[test]
-fn cp_multiple_sources_to_dir() {
-    let mut s = shell();
-    s.run_line("echo a > a.txt");
-    s.run_line("echo b > b.txt");
-    s.run_line("mkdir dest");
-    let (_, code, _) = s.run_line("cp a.txt b.txt dest");
-    assert_eq!(code, 0);
-    let (a, _, _) = s.run_line("cat dest/a.txt");
-    let (b, _, _) = s.run_line("cat dest/b.txt");
-    assert_eq!(a, "a");
-    assert_eq!(b, "b");
-}
-
-// --- M2: chmod symbolic modes ---
-#[test]
-fn chmod_symbolic_plus_x() {
-    let mut s = shell();
-    s.run_line("touch f.txt");
-    let (_, code, _) = s.run_line("chmod +x f.txt");
-    assert_eq!(code, 0);
-    let (out, _, _) = s.run_line("stat f.txt");
-    assert!(out.contains("x"), "should have execute bit: {out}");
-}
-
-// --- M4: tee -a spurious newline ---
-#[test]
-fn tee_append_no_extra_newline() {
-    let mut s = shell();
-    s.run_line("echo -n hello | tee f.txt");
-    s.run_line("echo -n world | tee -a f.txt");
-    let (out, _, _) = s.run_line("cat f.txt");
-    assert_eq!(out, "helloworld"); // no spurious newline between
-}
-
-// --- M10: find path after flags ---
-#[test]
-fn find_path_first_arg() {
+fn chmod_recursive_changes_all_children() {
     let mut s = shell();
     s.run_line("mkdir -p d/sub");
-    s.run_line("touch d/sub/f.txt");
-    let (out, code, _) = s.run_line("find d -type f");
+    s.run_line("touch d/f.txt");
+    s.run_line("touch d/sub/g.txt");
+    let (_, code, _) = s.run_line("chmod -R 755 d");
     assert_eq!(code, 0);
-    assert!(out.contains("f.txt"), "got: {out}");
+    let (stat_f, _, _) = s.run_line("stat d/f.txt");
+    assert!(
+        stat_f.contains("0755"),
+        "expected 0755 in stat d/f.txt: {stat_f}"
+    );
+    let (stat_g, _, _) = s.run_line("stat d/sub/g.txt");
+    assert!(
+        stat_g.contains("0755"),
+        "expected 0755 in stat d/sub/g.txt: {stat_g}"
+    );
+    let (stat_d, _, _) = s.run_line("stat d");
+    assert!(stat_d.contains("0755"), "expected 0755 in stat d: {stat_d}");
 }
 
-// --- L1: ls -l symlink-to-dir shows 'l' not 'd' ---
+// ---------------------------------------------------------------------------
+// ls -R (recursive)
+// ---------------------------------------------------------------------------
+
 #[test]
-fn ls_long_symlink_to_dir_shows_l() {
+fn ls_recursive_shows_subdirectory_contents() {
     let mut s = shell();
-    s.run_line("mkdir realdir");
-    s.run_line("ln -s realdir linkdir");
+    s.run_line("mkdir -p d/sub");
+    s.run_line("touch d/a.txt");
+    s.run_line("touch d/sub/b.txt");
+    let (out, code, _) = s.run_line("ls -R d");
+    assert_eq!(code, 0);
+    assert!(out.contains("a.txt"), "should list d contents: {out}");
+    assert!(out.contains("b.txt"), "should list d/sub contents: {out}");
+    assert!(
+        out.contains("d/sub:"),
+        "should have subdirectory header: {out}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// ls -1 (one per line)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ls_one_per_line() {
+    let mut s = shell();
+    s.run_line("touch a.txt b.txt c.txt");
+    let (out, code, _) = s.run_line("ls -1");
+    assert_eq!(code, 0);
+    // With -1, entries should be separated by \n, not double space
+    assert!(
+        out.contains("a.txt\n"),
+        "should have newline-separated entries: {out}"
+    );
+    assert!(
+        !out.contains("a.txt  "),
+        "should not have double-space separation: {out}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// ls -l date column
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ls_long_shows_date_column() {
+    let mut s = shell();
+    s.run_line("echo hello > f.txt");
     let (out, code, _) = s.run_line("ls -l");
     assert_eq!(code, 0);
-    // Find the line for linkdir — it should start with 'l' not 'd'
-    let link_line = out.lines().find(|l| l.contains("linkdir"));
-    assert!(link_line.is_some(), "linkdir not in ls output: {out}");
-    let ll = link_line.unwrap_or("");
+    // Date column should contain a month abbreviation
+    let has_month = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ]
+    .iter()
+    .any(|m| out.contains(m));
+    assert!(has_month, "expected month in ls -l output: {out}");
+    // Should also contain a colon from the time (HH:MM)
     assert!(
-        ll.starts_with('l'),
-        "symlink line should start with 'l', got: {ll}"
+        out.contains(':'),
+        "expected time with colon in ls -l output: {out}"
     );
 }
 
+// ---------------------------------------------------------------------------
+// find -maxdepth N
+// ---------------------------------------------------------------------------
+
 #[test]
-fn find_in_subtree() {
+fn find_maxdepth_limits_recursion() {
     let mut s = shell();
-    s.run_line("mkdir -p a/b");
-    s.run_line("echo x > a/b/f.txt");
-    s.run_line("echo y > other.txt");
-    let (out, code, _) = s.run_line("find a -name f.txt");
+    s.run_line("mkdir -p a/b/c");
+    s.run_line("touch a/top.txt");
+    s.run_line("touch a/b/mid.txt");
+    s.run_line("touch a/b/c/deep.txt");
+    let (out, code, _) = s.run_line("find a -maxdepth 1 -name '*.txt'");
     assert_eq!(code, 0);
-    assert!(out.contains("f.txt"), "got: {out}");
+    assert!(out.contains("top.txt"), "should find top.txt: {out}");
+    assert!(!out.contains("mid.txt"), "should not descend into b: {out}");
     assert!(
-        !out.contains("other.txt"),
-        "should not find other.txt: {out}"
+        !out.contains("deep.txt"),
+        "should not descend into b/c: {out}"
     );
 }
 
-#[test]
-fn cp_r_copies_directory() {
-    let mut s = shell();
-    s.run_line("mkdir -p src/sub");
-    s.run_line("echo hello > src/file.txt");
-    s.run_line("echo world > src/sub/deep.txt");
-    let (_, code, _) = s.run_line("cp -r src dst");
-    assert_eq!(code, 0);
-    let (out, _, _) = s.run_line("cat dst/file.txt");
-    assert_eq!(out, "hello");
-    let (out2, _, _) = s.run_line("cat dst/sub/deep.txt");
-    assert_eq!(out2, "world");
-}
+// ---------------------------------------------------------------------------
+// find -exec cmd {} \;
+// ---------------------------------------------------------------------------
 
 #[test]
-fn cp_r_on_file_works_like_regular_cp() {
-    let mut s = shell();
-    s.run_line("echo data > a.txt");
-    let (_, code, _) = s.run_line("cp -r a.txt b.txt");
-    assert_eq!(code, 0);
-    let (out, _, _) = s.run_line("cat b.txt");
-    assert_eq!(out, "data");
-}
-
-#[test]
-fn cp_without_r_rejects_directory() {
+fn find_exec_runs_command_for_each_match() {
     let mut s = shell();
     s.run_line("mkdir d");
-    let (out, code, _) = s.run_line("cp d d2");
-    assert_ne!(code, 0);
-    assert!(out.contains("omitting directory"), "got: {out}");
+    s.run_line("echo aaa > d/a.txt");
+    s.run_line("echo bbb > d/b.txt");
+    s.run_line("touch d/c.dat");
+    let (out, code, _) = s.run_line("find d -name '*.txt' -exec cat {} ;");
+    assert_eq!(code, 0);
+    assert!(out.contains("aaa"), "should cat a.txt: {out}");
+    assert!(out.contains("bbb"), "should cat b.txt: {out}");
+    assert!(!out.contains("c.dat"), "should not process c.dat");
+}
+
+// ---------------------------------------------------------------------------
+// ls -h (human-readable sizes in long format)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ls_lh_shows_human_readable_size() {
+    let mut s = shell();
+    // Create a file with known content to verify human-readable formatting
+    // Write 2048 bytes to get a "2.0K" display
+    s.run_line("touch big.txt");
+    // Write content: 2048 'x' chars
+    let content = "x".repeat(2048);
+    s.fs.write("/home/u/big.txt", content.as_bytes()).unwrap();
+    let (out, code, _) = s.run_line("ls -lh");
+    assert_eq!(code, 0);
+    assert!(out.contains("big.txt"), "should list the file: {out}");
+    // In human-readable mode, 2048 bytes should show as "2.0K"
+    assert!(
+        out.contains("K"),
+        "should show human-readable size with K suffix: {out}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// ls -t (sort by modification time)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ls_t_sorts_by_mtime_descending() {
+    let mut s = shell();
+    // Create files with increasing mtime by using sleep between them
+    s.run_line("echo a > first.txt");
+    s.run_line("sleep 1");
+    s.run_line("echo b > second.txt");
+    s.run_line("sleep 1");
+    s.run_line("echo c > third.txt");
+    let (out, code, _) = s.run_line("ls -t");
+    assert_eq!(code, 0);
+    // Most recently modified should come first
+    let lines: Vec<&str> = out.split_whitespace().collect();
+    let pos_third = lines.iter().position(|l| l.contains("third.txt"));
+    let pos_first = lines.iter().position(|l| l.contains("first.txt"));
+    assert!(
+        pos_third.is_some() && pos_first.is_some(),
+        "should list both files: {out}"
+    );
+    assert!(
+        pos_third.unwrap() < pos_first.unwrap(),
+        "third.txt (newest) should come before first.txt (oldest): {out}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// ls -a shows . and ..
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ls_a_shows_dot_and_dotdot() {
+    let mut s = shell();
+    s.run_line("mkdir sub");
+    s.run_line("touch sub/visible.txt");
+    let (out, code, _) = s.run_line("ls -a sub");
+    assert_eq!(code, 0);
+    // Directories are displayed with trailing /, so . becomes ./
+    let entries: Vec<&str> = out.split_whitespace().collect();
+    assert!(
+        entries.contains(&"./") || entries.contains(&"."),
+        "ls -a should show '.': {out}"
+    );
+    assert!(
+        entries.contains(&"../") || entries.contains(&".."),
+        "ls -a should show '..': {out}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// cp -n (no-clobber)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cp_n_does_not_overwrite_existing() {
+    let mut s = shell_with_files(serde_json::json!({
+        "src.txt": "new_content",
+        "existing.txt": "original"
+    }));
+    let (_, code, _) = s.run_line("cp -n src.txt existing.txt");
+    assert_eq!(code, 0);
+    let (out, _, _) = s.run_line("cat existing.txt");
+    assert_eq!(out, "original", "cp -n should not overwrite existing file");
+}
+
+// ---------------------------------------------------------------------------
+// cp -p (preserve permissions)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cp_p_preserves_permissions() {
+    let mut s = shell();
+    s.run_line("echo hello > src.txt");
+    s.run_line("chmod 755 src.txt");
+    let (_, code, _) = s.run_line("cp -p src.txt dst.txt");
+    assert_eq!(code, 0);
+    let (out, _, _) = s.run_line("stat -c '%a' dst.txt");
+    assert_eq!(
+        out.trim(),
+        "755",
+        "cp -p should preserve permissions: {out}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// ln -f (force overwrite existing)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ln_sf_force_overwrites_existing_symlink() {
+    let mut s = shell_with_files(serde_json::json!({
+        "target1.txt": "first",
+        "target2.txt": "second"
+    }));
+    s.run_line("ln -s target1.txt mylink");
+    let (out1, _, _) = s.run_line("cat mylink");
+    assert_eq!(out1, "first");
+    // Force overwrite
+    let (_, code, _) = s.run_line("ln -sf target2.txt mylink");
+    assert_eq!(code, 0);
+    let (out2, _, _) = s.run_line("cat mylink");
+    assert_eq!(out2, "second", "ln -sf should update the link target");
+}
+
+// ---------------------------------------------------------------------------
+// find -iname (case-insensitive name match)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn find_iname_case_insensitive() {
+    let mut s = shell();
+    s.run_line("mkdir d");
+    s.run_line("touch d/file.txt");
+    s.run_line("touch d/OTHER.TXT");
+    s.run_line("touch d/skip.dat");
+    let (out, code, _) = s.run_line("find d -iname '*.TXT'");
+    assert_eq!(code, 0);
+    assert!(out.contains("file.txt"), "should match lowercase: {out}");
+    assert!(out.contains("OTHER.TXT"), "should match uppercase: {out}");
+    assert!(
+        !out.contains("skip.dat"),
+        "should not match non-txt files: {out}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// find -delete
+// ---------------------------------------------------------------------------
+
+#[test]
+fn find_delete_removes_matching_files() {
+    let mut s = shell();
+    s.run_line("mkdir d");
+    s.run_line("touch d/a.tmp");
+    s.run_line("touch d/b.tmp");
+    s.run_line("touch d/keep.txt");
+    let (_, code, _) = s.run_line("find d -name '*.tmp' -delete");
+    assert_eq!(code, 0);
+    let (_, c1, _) = s.run_line("test -f d/a.tmp");
+    assert_eq!(c1, 1, "a.tmp should be deleted");
+    let (_, c2, _) = s.run_line("test -f d/b.tmp");
+    assert_eq!(c2, 1, "b.tmp should be deleted");
+    let (_, c3, _) = s.run_line("test -f d/keep.txt");
+    assert_eq!(c3, 0, "keep.txt should still exist");
+}
+
+// ---------------------------------------------------------------------------
+// find -path PATTERN
+// ---------------------------------------------------------------------------
+
+#[test]
+fn find_path_matches_full_path() {
+    let mut s = shell();
+    s.run_line("mkdir -p d/sub");
+    s.run_line("touch d/sub/file.txt");
+    s.run_line("touch d/other.txt");
+    let (out, code, _) = s.run_line("find d -path '*/sub/*.txt'");
+    assert_eq!(code, 0);
+    assert!(out.contains("sub/file.txt"), "should match sub path: {out}");
+    assert!(
+        !out.contains("other.txt"),
+        "should not match other.txt: {out}"
+    );
 }

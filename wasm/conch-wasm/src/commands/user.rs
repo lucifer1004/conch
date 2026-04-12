@@ -1,6 +1,7 @@
 use crate::shell::Shell;
 
 impl Shell {
+    /// `useradd [-m] [-d HOME] [-s SHELL] [-u UID] [-g GID] NAME` — create a new user account and home directory.
     pub fn cmd_useradd(&mut self, args: &[String]) -> (String, i32) {
         let mut home_opt: Option<String> = None;
         let mut shell_opt: Option<String> = None;
@@ -27,7 +28,7 @@ impl Shell {
                     i += 2;
                 }
                 "-g" if i + 1 < args.len() => {
-                    gid_opt = self.users.resolve_gid(&args[i + 1]);
+                    gid_opt = self.ident.users.resolve_gid(&args[i + 1]);
                     i += 2;
                 }
                 s if !s.starts_with('-') => {
@@ -45,25 +46,28 @@ impl Shell {
             None => return ("useradd: no username specified".to_string(), 1),
         };
 
-        if self.users.get_user_by_name(&name).is_some() {
+        if self.ident.users.get_user_by_name(&name).is_some() {
             return (format!("useradd: user '{}' already exists", name), 9);
         }
 
         let home = home_opt.unwrap_or_else(|| format!("/home/{}", name));
-        let _ = shell_opt; // stored in UserEntry in a real impl; we just drop it here
 
         let uid = match (uid_opt, gid_opt) {
-            (Some(uid), Some(gid)) => self.users.add_user_with_ids(&name, uid, gid, &home),
+            (Some(uid), Some(gid)) => self.ident.users.add_user_with_ids(&name, uid, gid, &home),
             (Some(uid), None) => {
-                let gid = self.users.add_group(&name);
-                self.users.add_user_with_ids(&name, uid, gid, &home)
+                let gid = self.ident.users.add_group(&name);
+                self.ident.users.add_user_with_ids(&name, uid, gid, &home)
             }
             (None, Some(_gid)) => {
                 // auto uid; for this sim just use auto gid as well
-                self.users.add_user(&name, &home)
+                self.ident.users.add_user(&name, &home)
             }
-            (None, None) => self.users.add_user(&name, &home),
+            (None, None) => self.ident.users.add_user(&name, &home),
         };
+
+        if let Some(shell) = shell_opt {
+            self.ident.users.set_user_shell(&name, shell);
+        }
 
         // Create home directory with correct ownership.
         // Temporarily run as root so we can write to /home (owned by root).
@@ -74,7 +78,8 @@ impl Shell {
         let _ = self.fs.chown(
             &home,
             uid,
-            self.users
+            self.ident
+                .users
                 .get_user_by_uid(uid)
                 .map(|u| u.gid)
                 .unwrap_or(uid),
@@ -84,6 +89,7 @@ impl Shell {
         (String::new(), 0)
     }
 
+    /// `groupadd [-g GID] NAME` — create a new group, optionally with an explicit GID.
     pub fn cmd_groupadd(&mut self, args: &[String]) -> (String, i32) {
         let mut groupname: Option<String> = None;
         let mut gid_opt: Option<u32> = None;
@@ -110,19 +116,20 @@ impl Shell {
             None => return ("groupadd: no group name specified".to_string(), 1),
         };
 
-        if self.users.get_group_by_name(&name).is_some() {
+        if self.ident.users.get_group_by_name(&name).is_some() {
             return (format!("groupadd: group '{}' already exists", name), 9);
         }
 
         if let Some(gid) = gid_opt {
-            self.users.add_group_with_id(&name, gid);
+            self.ident.users.add_group_with_id(&name, gid);
         } else {
-            self.users.add_group(&name);
+            self.ident.users.add_group(&name);
         }
 
         (String::new(), 0)
     }
 
+    /// `userdel [-r] NAME` — remove a user account; `-r` also deletes the home directory.
     pub fn cmd_userdel(&mut self, args: &[String]) -> (String, i32) {
         let mut remove_home = false;
         let mut username: Option<String> = None;
@@ -140,7 +147,7 @@ impl Shell {
             None => return ("userdel: no username specified".to_string(), 1),
         };
 
-        let entry = match self.users.remove_user(&name) {
+        let entry = match self.ident.users.remove_user(&name) {
             Some(e) => e,
             None => return (format!("userdel: user '{}' does not exist", name), 6),
         };
@@ -157,6 +164,7 @@ impl Shell {
         (String::new(), 0)
     }
 
+    /// `usermod [-a] [-G GROUP,...] NAME` — modify a user account; `-aG` appends supplementary groups.
     pub fn cmd_usermod(&mut self, args: &[String]) -> (String, i32) {
         // Parse -a -G group user
         let mut append = false;
@@ -191,14 +199,18 @@ impl Shell {
             None => return ("usermod: no username specified".to_string(), 1),
         };
 
-        if self.users.get_user_by_name(&name).is_none() {
+        if self.ident.users.get_user_by_name(&name).is_none() {
             return (format!("usermod: user '{}' does not exist", name), 6);
         }
 
-        let _ = append; // without -a, silently treat as append for this sim
+        if !append && !groups.is_empty() {
+            self.ident
+                .users
+                .remove_user_from_supplementary_groups(&name);
+        }
 
         for group in &groups {
-            if let Err(e) = self.users.add_user_to_group(&name, group) {
+            if let Err(e) = self.ident.users.add_user_to_group(&name, group) {
                 return (e, 6);
             }
         }
@@ -206,27 +218,78 @@ impl Shell {
         (String::new(), 0)
     }
 
+    /// `su [-] [-l] [-c CMD] [USER]` — switch to another user identity; `-c CMD` runs a single command and restores the caller.
     pub fn cmd_su(&mut self, args: &[String]) -> (String, i32) {
         let mut login_shell = false;
         let mut target_user: Option<String> = None;
+        let mut run_command: Option<String> = None;
 
-        for arg in args {
-            match arg.as_str() {
-                "-" | "-l" => login_shell = true,
-                s if !s.starts_with('-') => target_user = Some(s.to_string()),
-                _ => {}
+        let mut i = 0;
+        while i < args.len() {
+            match args[i].as_str() {
+                "-" | "-l" => {
+                    login_shell = true;
+                    i += 1;
+                }
+                "-c" => {
+                    if i + 1 < args.len() {
+                        run_command = Some(args[i + 1].clone());
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                s if !s.starts_with('-') => {
+                    target_user = Some(s.to_string());
+                    i += 1;
+                }
+                _ => {
+                    i += 1;
+                }
             }
         }
 
         let uname = target_user.unwrap_or_else(|| "root".to_string());
 
-        let (uid, gid, home) = match self.users.get_user_by_name(&uname) {
+        let (uid, gid, home) = match self.ident.users.get_user_by_name(&uname) {
             Some(u) => (u.uid, u.gid, u.home.clone()),
             None => return (format!("su: user {} does not exist", uname), 1),
         };
 
+        // su -c COMMAND: run command as target user, then restore identity
+        if let Some(cmd) = run_command {
+            let saved_uid = self.fs.current_uid();
+            let saved_gid = self.fs.current_gid();
+            let saved_groups: Vec<u32> = self.fs.supplementary_gids().to_vec();
+            let saved_user = self.ident.user.clone();
+
+            let sup_gids: Vec<u32> = self
+                .ident
+                .users
+                .user_groups(&uname)
+                .iter()
+                .map(|g| g.gid)
+                .filter(|&g| g != gid)
+                .collect();
+            self.fs.set_identity(uid, gid, &sup_gids);
+            self.ident.user = uname.clone().into();
+            self.vars.env.insert("USER".into(), uname.clone());
+
+            let (output, code, _) = self.run_line(&cmd);
+
+            // Restore original identity
+            self.fs.set_identity(saved_uid, saved_gid, &saved_groups);
+            self.ident.user = saved_user;
+            self.vars
+                .env
+                .insert("USER".into(), self.ident.user.to_string());
+
+            return (output, code);
+        }
+
         // Install full identity: uid, gid, and supplementary groups
         let sup_gids: Vec<u32> = self
+            .ident
             .users
             .user_groups(&uname)
             .iter()
@@ -234,19 +297,20 @@ impl Shell {
             .filter(|&g| g != gid)
             .collect();
         self.fs.set_identity(uid, gid, &sup_gids);
-        self.user = uname.clone();
-        self.env.insert("USER".to_string(), uname.clone());
+        self.ident.user = uname.clone().into();
+        self.vars.env.insert("USER".into(), uname.clone());
 
         if login_shell {
-            self.cwd = home.clone();
-            self.home = home.clone();
-            self.env.insert("HOME".to_string(), home.clone());
-            self.env.insert("PWD".to_string(), home);
+            self.cwd = home.clone().into();
+            self.ident.home = home.clone().into();
+            self.vars.env.insert("HOME".into(), home.clone());
+            self.vars.env.insert("PWD".into(), home);
         }
 
         (String::new(), 0)
     }
 
+    /// `sudo [-u USER] CMD [ARGS...]` — run a command as root (or as `USER` with `-u`), restoring the caller's identity afterward.
     pub fn cmd_sudo(&mut self, args: &[String]) -> (String, i32) {
         if args.is_empty() {
             return ("sudo: no command specified".to_string(), 1);
@@ -255,14 +319,64 @@ impl Shell {
         let saved_uid = self.fs.current_uid();
         let saved_gid = self.fs.current_gid();
         let saved_groups: Vec<u32> = self.fs.supplementary_gids().to_vec();
-        let saved_user = self.user.clone();
+        let saved_user = self.ident.user.clone();
 
-        // Elevate to root with full identity switch
-        self.fs.set_identity(0, 0, &[]);
-        self.user = "root".to_string();
+        // Parse -u USER flag
+        let mut target_user: Option<String> = None;
+        let mut cmd_start = 0;
+        {
+            let mut i = 0;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "-u" if i + 1 < args.len() => {
+                        target_user = Some(args[i + 1].clone());
+                        i += 2;
+                        cmd_start = i;
+                    }
+                    s if s.starts_with('-') => {
+                        i += 1;
+                        cmd_start = i;
+                    }
+                    _ => {
+                        cmd_start = i;
+                        break;
+                    }
+                }
+            }
+        }
 
-        let cmd = &args[0];
-        let rest = &args[1..];
+        let cmd_args = &args[cmd_start..];
+        if cmd_args.is_empty() {
+            return ("sudo: no command specified".to_string(), 1);
+        }
+
+        // Resolve target identity
+        if let Some(ref uname) = target_user {
+            match self.ident.users.get_user_by_name(uname) {
+                Some(u) => {
+                    let sup_gids: Vec<u32> = self
+                        .ident
+                        .users
+                        .user_groups(uname)
+                        .iter()
+                        .map(|g| g.gid)
+                        .filter(|&g| g != u.gid)
+                        .collect();
+                    self.fs.set_identity(u.uid, u.gid, &sup_gids);
+                    self.ident.user = uname.clone().into();
+                }
+                None => {
+                    return (format!("sudo: unknown user: {}", uname), 1);
+                }
+            }
+        } else {
+            // Default: elevate to root
+            self.fs.set_identity(0, 0, &[]);
+            self.ident.user = "root".into();
+        }
+
+        let cmd = &cmd_args[0];
+        let rest = &cmd_args[1..];
         let line = if rest.is_empty() {
             cmd.clone()
         } else {
@@ -273,11 +387,12 @@ impl Shell {
 
         // Restore full identity
         self.fs.set_identity(saved_uid, saved_gid, &saved_groups);
-        self.user = saved_user;
+        self.ident.user = saved_user;
 
         (output, code)
     }
 
+    /// `passwd [USER]` — stub: always reports a successful password update.
     pub fn cmd_passwd(&mut self, _args: &[String]) -> (String, i32) {
         ("passwd: password updated successfully".to_string(), 0)
     }

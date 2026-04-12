@@ -1,8 +1,24 @@
+//! Wire-format types for the JSON interface between Typst and the WASM shell.
+
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-// Re-export bare_vfs types for use across the crate
+use crate::Str;
+
 pub use bare_vfs::Entry as FsEntry;
+
+/// How `cmd &` behaves.
+#[derive(Deserialize, Default, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum BackgroundMode {
+    /// Run immediately to completion (default, Typst-safe).
+    #[default]
+    Sync,
+    /// Store as lazy job; execute on `wait`.
+    Deferred,
+    /// Store as lazy job; step during foreground execution.
+    Interleaved,
+}
 
 /// Input configuration from Typst
 #[derive(Deserialize)]
@@ -22,6 +38,8 @@ pub struct Config {
     pub date: Option<String>,
     #[serde(default, rename = "include-files")]
     pub include_files: bool,
+    #[serde(default, rename = "background-mode")]
+    pub background_mode: BackgroundMode,
 }
 
 #[derive(Deserialize, Default)]
@@ -63,8 +81,8 @@ pub struct GroupSpec {
 /// A single command's output in the terminal session
 #[derive(Serialize)]
 pub struct OutputEntry {
-    pub user: String,
-    pub hostname: String,
+    pub user: Str,
+    pub hostname: Str,
     pub path: String,
     pub command: String,
     pub output: String,
@@ -72,6 +90,32 @@ pub struct OutputEntry {
     pub exit_code: i32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lang: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "first-line")]
+    pub first_line: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "last-line")]
+    pub last_line: Option<u32>,
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        rename = "bg-completions"
+    )]
+    pub bg_completions: Vec<String>,
+}
+
+/// Statement range info returned by `analyze_script`.
+#[derive(Serialize)]
+pub struct StatementRange {
+    #[serde(rename = "first-line")]
+    pub first_line: u32,
+    #[serde(rename = "last-line")]
+    pub last_line: u32,
+    pub source: String,
+}
+
+/// Result of `analyze_script` — structural info about a script.
+#[derive(Serialize)]
+pub struct ScriptAnalysis {
+    pub statements: Vec<StatementRange>,
 }
 
 /// A filesystem entry in the output snapshot.
