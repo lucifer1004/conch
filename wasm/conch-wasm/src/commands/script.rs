@@ -44,10 +44,11 @@ impl Shell {
         (out, code, None)
     }
 
-    /// `bash [-e] [-x] [-c cmd_string] [file [args...]]` / `sh` — execute in ISOLATED subshell.
+    /// `bash [-e] [-x] [-c cmd_string] [file [args...]]` / `sh` / `conch` — execute in ISOLATED subshell.
     pub fn cmd_bash(&mut self, args: &[String]) -> (String, i32) {
         if args.is_empty() {
-            return ("bash: missing script file or -c".into(), 1);
+            // No args, no stdin — like non-interactive bash with empty input: exit 0.
+            return (String::new(), 0);
         }
 
         // Pre-parse option flags before -c or file argument
@@ -89,7 +90,8 @@ impl Shell {
         let args = &args[skip..];
 
         if args.is_empty() {
-            return ("bash: missing script file or -c".into(), 1);
+            // Only flags given (e.g. `bash -e`), no script or -c: no-op.
+            return (String::new(), 0);
         }
 
         // Handle bash -c 'command string' [name [args...]]

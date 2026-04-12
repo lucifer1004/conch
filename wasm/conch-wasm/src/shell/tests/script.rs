@@ -125,6 +125,26 @@ fn nested_bash_isolation() {
 }
 
 // ---------------------------------------------------------------------------
+// bash (no args) — no-op
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bash_no_args_is_noop() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("bash");
+    assert_eq!(code, 0);
+    assert_eq!(out, "");
+}
+
+#[test]
+fn bash_only_flags_is_noop() {
+    let mut s = shell();
+    let (out, code, _) = s.run_line("bash -e");
+    assert_eq!(code, 0);
+    assert_eq!(out, "");
+}
+
+// ---------------------------------------------------------------------------
 // bash -c
 // ---------------------------------------------------------------------------
 
