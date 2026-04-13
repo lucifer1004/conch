@@ -1,5 +1,5 @@
 [workspace]
-members = ["conch-wasm", "bare-vfs"]
+members = ["conch-wasm", "bare-vfs", "demo-plugin"]
 resolver = "2"
 
 [workspace.lints.clippy]

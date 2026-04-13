@@ -25,6 +25,8 @@ pub(crate) struct StmtResult {
     pub exit_code: i32,
     pub lang: Option<String>,
     pub bg_completions: Vec<String>,
+    /// External plugin delegation request (if the command is handled by Typst).
+    pub delegate: Option<crate::types::DelegateEntry>,
     /// The control flow returned by this statement.
     pub flow: ControlFlow,
 }
@@ -129,6 +131,7 @@ impl Shell {
 
             let exit_code = last.exit_code();
             let lang = self.last_lang.take();
+            let delegate = self.last_delegate.take();
             let bg = std::mem::take(&mut self.pending_bg_completions);
 
             results.push(StmtResult {
@@ -142,6 +145,7 @@ impl Shell {
                 exit_code,
                 lang,
                 bg_completions: bg,
+                delegate,
                 flow: match &last {
                     ControlFlow::Normal(c) => ControlFlow::Normal(*c),
                     ControlFlow::Return(c) => ControlFlow::Return(*c),
@@ -1362,6 +1366,7 @@ mod tests {
             date: None,
             include_files: false,
             background_mode: Default::default(),
+            external_commands: Vec::new(),
         };
         crate::shell::Shell::new(&config)
     }

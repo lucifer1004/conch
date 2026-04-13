@@ -22,11 +22,15 @@
   users: (),
   groups: (),
   files: (:),
+  plugins: (),
+  wasm-plugins: (),
 ) = (
   hostname: hostname,
   users: users,
   groups: groups,
   files: files,
+  plugins: plugins,
+  wasm-plugins: wasm-plugins,
 )
 
 /// Resolve a system dict: if none provided, build a default one.

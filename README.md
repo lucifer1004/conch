@@ -330,6 +330,61 @@ cat dist/status
 
 Scripts support the full shell feature set: pipes, redirects, chaining, variables.
 
+## Plugins
+
+### Typst Function Plugins
+
+Define custom commands as plain Typst functions — no compilation needed:
+
+````typst
+#import "@preview/conch:0.1.0": system, terminal
+
+#let cowsay(args, stdin, files) = {
+  let msg = if stdin != "" { stdin.trim("\n", at: end) } else { args.join(" ") }
+  (stdout: "< " + msg + " >\n", exit-code: 0)
+}
+
+#show: terminal.with(
+  system: system(plugins: (("cowsay", cowsay),)),
+  user: "demo",
+)
+
+```
+cowsay "Hello from a plugin!"
+echo "piped input" | cowsay
+```
+````
+
+### WASM Plugins
+
+Compile a command to WebAssembly and run it inside conch via the embedded wasmi interpreter. WASM plugins work in any pipeline position, just like built-in commands.
+
+````typst
+#import "@preview/conch:0.1.0": system, terminal
+
+#let upper = read("upper.wasm", encoding: none)
+
+#show: terminal.with(
+  system: system(wasm-plugins: (("upper", upper),)),
+  user: "demo",
+)
+
+```
+echo "hello" | upper | head -1
+cat file.txt | upper
+```
+````
+
+![WASM plugin demo](./demo/plugin-wasm.png)
+![Typst function plugin demo](./demo/plugin-typst.png)
+
+WASM plugins follow the `wasm-minimal-protocol` and exchange JSON:
+
+- Input: `{"args": [...], "stdin": "...", "files": {"name": "content"}}`
+- Output: `{"stdout": "...", "exit-code": 0}`
+
+See `wasm/demo-plugin/` for a complete example.
+
 ## Syntax Highlighting
 
 `cat` automatically detects file extensions and applies Typst's native syntax highlighting:
@@ -764,7 +819,7 @@ Each entry in `files` is tagged by type:
 
 | Function                                                                                                   | Description                                                                                                                       |
 | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `system(hostname, users, groups, files)`                                                                   | Define a virtual system configuration                                                                                             |
+| `system(hostname, users, groups, files, plugins, wasm-plugins)`                                            | Define a virtual system configuration                                                                                             |
 | `execute(system, user, commands)`                                                                          | Execute commands and return raw session data (no rendering)                                                                       |
 | `terminal-frame(body, title, theme, font, chrome, style, width, height)`                                   | Themed terminal window chrome                                                                                                     |
 | `render-ansi(body, theme)`                                                                                 | ANSI escape sequence renderer                                                                                                     |

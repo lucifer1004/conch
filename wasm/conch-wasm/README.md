@@ -77,6 +77,19 @@ Typst document
 - **Syntax highlighting**: language detection for `cat` output
 - **Command history**: `history` builtin; Up/Down arrow navigation in per-char animations
 
+## Plugin System
+
+conch supports two types of plugins:
+
+**Typst Function Plugins** — Define custom commands as Typst functions without compilation. Plugins receive `(args, stdin, files)` and return `(stdout, exit-code)`.
+
+**WASM Plugins** — Compile commands to WebAssembly (via wasmi) and load them alongside built-in commands. WASM plugins follow the `wasm-minimal-protocol`, exchanging JSON input/output:
+
+- Input: `{"args": [...], "stdin": "...", "files": {"name": "content"}}`
+- Output: `{"stdout": "...", "exit-code": 0}`
+
+WASM plugins work seamlessly in pipelines, redirects, and command chains. See `wasm/demo-plugin/` for a complete example.
+
 ## Permission Model
 
 The shell enforces Unix-style permissions:

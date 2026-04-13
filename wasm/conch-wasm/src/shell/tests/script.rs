@@ -215,6 +215,56 @@ fn exec_missing_script() {
 }
 
 // ---------------------------------------------------------------------------
+// ./file.wasm (WASM binary execution via wasmi)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn exec_wasm_standalone() {
+    let wasm = include_bytes!("../../../../../demo/demo-plugin.wasm");
+    let mut s = shell();
+    s.fs.write_with_mode("/home/u/upper.wasm", wasm, 0o755).ok();
+    let (out, code, _) = s.run_line("./upper.wasm hello world");
+    assert_eq!(code, 0);
+    assert_eq!(out, "HELLO WORLD\n");
+}
+
+#[test]
+fn exec_wasm_with_stdin_pipe() {
+    let wasm = include_bytes!("../../../../../demo/demo-plugin.wasm");
+    let mut s = shell();
+    s.fs.write_with_mode("/home/u/upper.wasm", wasm, 0o755).ok();
+    let (out, code, _) = s.run_line("echo hello | ./upper.wasm");
+    assert_eq!(code, 0);
+    assert_eq!(out, "HELLO\n");
+}
+
+#[test]
+fn exec_wasm_mid_pipeline() {
+    let wasm = include_bytes!("../../../../../demo/demo-plugin.wasm");
+    let mut s = shell();
+    s.fs.write_with_mode("/home/u/upper.wasm", wasm, 0o755).ok();
+    let (out, code, _) = s.run_line("echo hello | ./upper.wasm | cat");
+    assert_eq!(code, 0);
+    assert_eq!(out, "HELLO\n");
+}
+
+#[test]
+fn exec_wasm_not_executable_fails() {
+    let wasm = include_bytes!("../../../../../demo/demo-plugin.wasm");
+    let mut s = shell();
+    s.fs.write_with_mode("/home/u/upper.wasm", wasm, 0o644).ok();
+    let (_, code, _) = s.run_line("./upper.wasm hello");
+    assert_eq!(code, 126);
+}
+
+#[test]
+fn exec_wasm_missing_fails() {
+    let mut s = shell();
+    let (_, code, _) = s.run_line("./nonexistent.wasm");
+    assert_eq!(code, 127);
+}
+
+// ---------------------------------------------------------------------------
 // source / .
 // ---------------------------------------------------------------------------
 

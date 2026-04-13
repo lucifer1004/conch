@@ -39,6 +39,11 @@ build:
     cp wasm/target/{{ wasm-target }}/release/conch.wasm conch.wasm
 
 [group("build")]
+build-demo-plugin:
+    cd wasm && {{ cargo }} build -p demo-plugin --release --target {{ wasm-target }}
+    cp wasm/target/{{ wasm-target }}/release/demo_plugin.wasm demo/demo-plugin.wasm
+
+[group("build")]
 clean:
     cd wasm && {{ cargo }} clean
     rm -f conch.wasm
@@ -181,7 +186,7 @@ gif src="demo/demo.typ" out="" frames_dir="" fps="10" hold_after_output="" hold_
 
 # PNG screenshots + special cases. `{0p}` must stay literal (just would treat `{p}` as a variable).
 [group("build")]
-demos: build
+demos: build build-demo-plugin
     for f in demo/*.typ; do \
       [[ "$f" == demo/demo.typ ]] && continue; \
       if [[ "$f" == demo/touying.typ ]]; then \
@@ -211,7 +216,8 @@ package dest: build
     # README images (committed to repo but excluded from download bundle via typst.toml)
     cp demo/demo.gif demo/touying.gif demo/frame.png demo/shell.png demo/pipes.png \
        demo/permissions.png demo/script.png demo/themes.png demo/chrome.png \
-       demo/paginate-1.png demo/paginate-2.png demo/include-files.png "$dest/demo/"
+       demo/paginate-1.png demo/paginate-2.png demo/include-files.png \
+       demo/plugin-wasm.png demo/plugin-typst.png demo/demo-plugin.wasm "$dest/demo/"
     echo "Packaged to $dest"
     echo "Files:"
     find "$dest" -type f | sort | while read -r f; do

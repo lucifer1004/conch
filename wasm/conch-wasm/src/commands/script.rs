@@ -141,8 +141,8 @@ impl Shell {
         (out, code)
     }
 
-    /// Execute a file as a script (`./script.sh`). ISOLATED subshell.
-    pub fn cmd_exec(&mut self, cmd: &str, args: &[String]) -> (String, i32) {
+    /// Execute a file as a script (`./script.sh`) or WASM module (`./prog.wasm`).
+    pub fn cmd_exec(&mut self, cmd: &str, args: &[String], stdin: Option<&str>) -> (String, i32) {
         let path = self.resolve(cmd);
         let meta = match self.fs.metadata(&path) {
             Ok(m) if m.is_dir() => return (format!("conch: {}: Is a directory", cmd), 126),
@@ -155,6 +155,17 @@ impl Shell {
         if !meta.is_executable() {
             return (format!("conch: {}: Permission denied", cmd), 126);
         }
+
+        // WASM binary: detect by magic bytes (\0asm) or .wasm extension
+        let is_wasm = path.ends_with(".wasm")
+            || self
+                .fs
+                .read(&path)
+                .is_ok_and(|b| b.len() >= 4 && b[..4] == [0x00, 0x61, 0x73, 0x6D]);
+        if is_wasm {
+            return self.exec_wasm_file(&path, cmd, args, stdin);
+        }
+
         let script = match self.fs.read_to_string(&path) {
             Ok(s) => s.to_string(),
             Err(e) => return (format!("conch: {}: {}", cmd, e), 126),
@@ -166,6 +177,39 @@ impl Shell {
         let (out, code) = self.run_script(&script);
         self.restore_subshell(snap);
         (out, code)
+    }
+
+    /// Execute a WASM binary from the VFS via wasmi.
+    fn exec_wasm_file(
+        &mut self,
+        path: &str,
+        cmd: &str,
+        args: &[String],
+        stdin: Option<&str>,
+    ) -> (String, i32) {
+        let wasm_bytes = match self.fs.read(path) {
+            Ok(b) => b.to_vec(),
+            Err(e) => return (format!("conch: {}: {}", cmd, e), 126),
+        };
+        // Resolve file args from VFS (same as plugin dispatch)
+        let mut files = std::collections::BTreeMap::new();
+        for arg in args {
+            if !arg.starts_with('-') {
+                let resolved = self.resolve(arg);
+                if let Ok(content) = self.fs.read_to_string(&resolved) {
+                    files.insert(arg.clone(), content.to_string());
+                }
+            }
+        }
+        match crate::plugin_host::run_wasm(&wasm_bytes, args, stdin.unwrap_or(""), &files) {
+            Ok(result) => {
+                for (fpath, content) in &result.writes {
+                    let _ = self.fs.write(fpath, content.as_bytes());
+                }
+                (result.stdout, result.exit_code)
+            }
+            Err(e) => (format!("conch: {}: {}", cmd, e), 126),
+        }
     }
 
     /// Search PATH directories for a readable file, returning its content.

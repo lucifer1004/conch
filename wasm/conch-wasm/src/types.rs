@@ -40,6 +40,9 @@ pub struct Config {
     pub include_files: bool,
     #[serde(default, rename = "background-mode")]
     pub background_mode: BackgroundMode,
+    /// Names of commands handled by external Typst-side plugins.
+    #[serde(default, rename = "external-commands")]
+    pub external_commands: Vec<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -100,6 +103,20 @@ pub struct OutputEntry {
         rename = "bg-completions"
     )]
     pub bg_completions: Vec<String>,
+    /// If set, this command should be handled by an external Typst-side plugin.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delegate: Option<DelegateEntry>,
+}
+
+/// Request for Typst to dispatch a command to an external plugin.
+#[derive(Serialize, Clone)]
+pub struct DelegateEntry {
+    pub command: String,
+    pub args: Vec<String>,
+    pub stdin: String,
+    /// VFS file contents for args that reference existing files.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub files: BTreeMap<String, String>,
 }
 
 /// Statement range info returned by `analyze_script`.

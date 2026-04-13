@@ -6,6 +6,7 @@
 pub mod ansi;
 mod commands;
 pub mod keyline;
+mod plugin_host;
 pub mod script;
 mod shell;
 mod str_type;
@@ -66,6 +67,7 @@ pub fn execute(input: &[u8]) -> Vec<u8> {
                     first_line: Some(r.first_line),
                     last_line: Some(r.last_line),
                     bg_completions: r.bg_completions,
+                    delegate: r.delegate,
                 });
             }
 
@@ -83,6 +85,7 @@ pub fn execute(input: &[u8]) -> Vec<u8> {
                     first_line: None,
                     last_line: None,
                     bg_completions: Vec::new(),
+                    delegate: None,
                 });
             }
         }
@@ -98,6 +101,7 @@ pub fn execute(input: &[u8]) -> Vec<u8> {
                 first_line: None,
                 last_line: None,
                 bg_completions: Vec::new(),
+                delegate: None,
             });
         }
     }
@@ -212,6 +216,26 @@ pub fn process_keyline_with_history(input: &[u8]) -> Vec<u8> {
     };
     let states = keyline::process_with_history(&parsed.input, &parsed.history);
     serde_json::to_vec(&states).unwrap_or_default()
+}
+
+/// Register an external WASM plugin for a command name.
+/// Input format: 4 bytes (name length LE) + name bytes + WASM module bytes.
+#[wasm_func]
+pub fn register_plugin(input: &[u8]) -> Vec<u8> {
+    if input.len() < 4 {
+        return br#"{"error":"input too short"}"#.to_vec();
+    }
+    let name_len = u32::from_le_bytes([input[0], input[1], input[2], input[3]]) as usize;
+    if input.len() < 4 + name_len {
+        return br#"{"error":"name length exceeds input"}"#.to_vec();
+    }
+    let name = match std::str::from_utf8(&input[4..4 + name_len]) {
+        Ok(s) => s,
+        Err(_) => return br#"{"error":"invalid UTF-8 name"}"#.to_vec(),
+    };
+    let wasm_bytes = input[4 + name_len..].to_vec();
+    plugin_host::register(name, wasm_bytes);
+    br#"{"ok":true}"#.to_vec()
 }
 
 #[wasm_func]
@@ -542,6 +566,56 @@ mod tests {
             all_output.contains("goodbye"),
             "EXIT trap should fire at session end: {:?}",
             entries
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn execute_external_command_produces_delegate() -> Result<(), String> {
+        let input = br#"{"user":"u","system":{"hostname":"h","users":[{"name":"u","home":"/home/u"}]},"commands":["jq '.name'"],"external-commands":["jq"]}"#;
+        let raw = execute(input);
+        let v: serde_json::Value =
+            serde_json::from_slice(&raw).map_err(|e| format!("json parse: {}", e))?;
+        let entries = v["entries"].as_array().ok_or("missing entries")?;
+        assert_eq!(entries.len(), 1);
+        let d = &entries[0]["delegate"];
+        assert!(!d.is_null(), "should have delegate: {:?}", entries[0]);
+        assert_eq!(d["command"].as_str(), Some("jq"));
+        assert_eq!(d["args"][0].as_str(), Some(".name"));
+        Ok(())
+    }
+
+    #[test]
+    fn execute_external_in_pipeline_gets_stdin() -> Result<(), String> {
+        let input = br#"{"user":"u","system":{"hostname":"h","users":[{"name":"u","home":"/home/u"}],"files":{"data.json":"{\"name\":\"alice\"}"}},"commands":["cat data.json | jq '.name'"],"external-commands":["jq"]}"#;
+        let raw = execute(input);
+        let v: serde_json::Value =
+            serde_json::from_slice(&raw).map_err(|e| format!("json parse: {}", e))?;
+        let entries = v["entries"].as_array().ok_or("missing entries")?;
+        assert_eq!(entries.len(), 1);
+        let d = &entries[0]["delegate"];
+        assert!(!d.is_null(), "should have delegate: {:?}", entries[0]);
+        assert_eq!(d["command"].as_str(), Some("jq"));
+        let stdin = d["stdin"].as_str().unwrap_or("");
+        assert!(
+            stdin.contains("alice"),
+            "delegate stdin should contain cat output: {}",
+            stdin
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn execute_unknown_command_without_external_gives_127() -> Result<(), String> {
+        let input = br#"{"user":"u","system":{"hostname":"h","users":[{"name":"u","home":"/home/u"}]},"commands":["jq '.name'"]}"#;
+        let raw = execute(input);
+        let v: serde_json::Value =
+            serde_json::from_slice(&raw).map_err(|e| format!("json parse: {}", e))?;
+        let entries = v["entries"].as_array().ok_or("missing entries")?;
+        assert_eq!(entries[0]["exit-code"].as_i64(), Some(127));
+        assert!(
+            entries[0].get("delegate").is_none() || entries[0]["delegate"].is_null(),
+            "should NOT have delegate without external-commands"
         );
         Ok(())
     }

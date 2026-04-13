@@ -20,3 +20,4 @@ lexopt = "0.3"
 winnow = { version = "1", default-features = false, features = ["alloc", "parser"] }
 regex-lite = "0.1"
 compact_str = { version = "0.9", features = ["serde"] }
+wasmi = { version = "1.0.9", default-features = false }

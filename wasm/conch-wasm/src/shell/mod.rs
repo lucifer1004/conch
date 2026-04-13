@@ -741,6 +741,9 @@ pub struct Shell {
     /// Language hint from the last executed command (e.g. `cat main.rs` → `Some("rust")`).
     /// Read by lib.rs to attach syntax highlighting info to OutputEntry.
     pub last_lang: Option<String>,
+    /// Delegate info from the last executed command (external plugin request).
+    /// Read by lib.rs to attach to OutputEntry.
+    pub last_delegate: Option<crate::types::DelegateEntry>,
 
     // Grouped by domain
     pub(crate) ident: ShellIdent,
@@ -768,6 +771,9 @@ pub struct Shell {
 
     /// Options controllable via `shopt`.
     pub(crate) shopt: ShoptOpts,
+
+    /// Names of commands handled by external Typst-side plugins.
+    pub(crate) external_commands: Vec<String>,
 }
 
 impl Shell {
@@ -965,8 +971,10 @@ impl Shell {
             dir_stack: Vec::new(),
             color: true,
             last_lang: None,
+            last_delegate: None,
             start_time,
             shopt: ShoptOpts::default(),
+            external_commands: config.external_commands.clone(),
         }
     }
 
@@ -1082,6 +1090,7 @@ impl Shell {
         let pre_hostname = self.ident.hostname.clone();
         let (output, code, lang) = self.run_line(line);
         let bg = std::mem::take(&mut self.pending_bg_completions);
+        let delegate = self.last_delegate.take();
         OutputEntry {
             user: pre_user,
             hostname: pre_hostname,
@@ -1093,6 +1102,7 @@ impl Shell {
             first_line: None,
             last_line: None,
             bg_completions: bg,
+            delegate,
         }
     }
 

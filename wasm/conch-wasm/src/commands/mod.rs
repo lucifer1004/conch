@@ -272,11 +272,53 @@ pub fn dispatch(shell: &mut Shell, cmd: &str, args: &[String], stdin: Option<&st
         "trap" => plain(shell.cmd_trap(args)),
         "mapfile" | "readarray" => plain(shell.cmd_mapfile(args, stdin)),
 
-        _ if cmd.starts_with("./") || cmd.starts_with('/') => plain(shell.cmd_exec(cmd, args)),
+        _ if cmd.starts_with("./") || cmd.starts_with('/') => {
+            plain(shell.cmd_exec(cmd, args, stdin))
+        }
         // Try user-defined function
         _ if shell.defs.has_function(cmd) => plain(shell.call_function(cmd, args)),
         // Try PATH lookup
         _ if shell.is_in_path(cmd) => plain(shell.exec_from_path(cmd, args)),
+        // WASM plugin (wasmi) — runs synchronously inside conch
+        _ if crate::plugin_host::has_plugin(cmd) => {
+            let mut files = std::collections::BTreeMap::new();
+            for arg in args {
+                if !arg.starts_with('-') {
+                    let resolved = shell.resolve(arg);
+                    if let Ok(content) = shell.fs.read_to_string(&resolved) {
+                        files.insert(arg.clone(), content.to_string());
+                    }
+                }
+            }
+            match crate::plugin_host::run(cmd, args, stdin.unwrap_or(""), &files) {
+                Ok(result) => {
+                    for (path, content) in &result.writes {
+                        let _ = shell.fs.write(path, content.as_bytes());
+                    }
+                    raw((result.stdout, result.exit_code))
+                }
+                Err(e) => plain((format!("conch: {}: {}", cmd, e), 1)),
+            }
+        }
+        // External command — delegate to Typst-side plugin
+        _ if shell.external_commands.contains(&cmd.to_string()) => {
+            let mut files = std::collections::BTreeMap::new();
+            for arg in args {
+                if !arg.starts_with('-') {
+                    let resolved = shell.resolve(arg);
+                    if let Ok(content) = shell.fs.read_to_string(&resolved) {
+                        files.insert(arg.clone(), content.to_string());
+                    }
+                }
+            }
+            shell.last_delegate = Some(crate::types::DelegateEntry {
+                command: cmd.to_string(),
+                args: args.to_vec(),
+                stdin: stdin.unwrap_or("").to_string(),
+                files,
+            });
+            raw((String::new(), 0))
+        }
         _ => plain((format!("conch: command not found: {}", cmd), 127)),
     }
 }
@@ -401,7 +443,9 @@ pub fn dispatch_no_functions(
             dispatch(shell, cmd, args, stdin)
         }
         // Try PATH lookup (skip functions)
-        _ if cmd.starts_with("./") || cmd.starts_with('/') => plain(shell.cmd_exec(cmd, args)),
+        _ if cmd.starts_with("./") || cmd.starts_with('/') => {
+            plain(shell.cmd_exec(cmd, args, stdin))
+        }
         _ if shell.is_in_path(cmd) => plain(shell.exec_from_path(cmd, args)),
         _ => plain((format!("conch: command not found: {}", cmd), 127)),
     }
