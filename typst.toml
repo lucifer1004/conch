@@ -6,6 +6,7 @@ entrypoint = "lib.typ"
 authors = ["Zihua Wu"]
 license = "MIT"
 description = "Simulate a shell and render terminal sessions in documents."
+repository = "https://github.com/lucifer1004/conch"
 keywords = ["terminal", "shell", "ansi", "wasm", "simulator"]
 categories = ["integration", "fun"]
 exclude = ["wasm/", "Justfile", "demo/", "_vendor/", "CONTRIBUTING_GUIDE.md"]
